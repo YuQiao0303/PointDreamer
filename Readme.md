@@ -6,6 +6,10 @@ PointDreamer takes colored point clouds as input, and reconstructs corresponding
 ![teaser](assets/teaser.png)
 
 
+
+https://github.com/YuQiao0303/PointDreamer/assets/28769198/12d16fb7-ae71-4367-813e-e7e470719925
+
+
 ## Install
 We tested on torch2.0.0, cuda11.8. Other versions may also work.
 ```bash
