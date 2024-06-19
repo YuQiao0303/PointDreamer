@@ -1,0 +1,10 @@
+name: poco
+channels:
+  - anaconda
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.7.10
+  - cudatoolkit=11.1
+  - wheel
+  - pip

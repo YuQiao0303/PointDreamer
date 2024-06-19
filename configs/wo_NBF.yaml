@@ -1,0 +1,63 @@
+exp_name: 'optimize_from_ours'
+exist_root_path: None #2024.03.04.11.14.22_ours_kaolin_nearest_google_scanned_objects_ours_time
+
+#### input
+dataset_name: google_scanned_objects # shapenet_core_v2,google_scanned_objects,omniobject3d
+cls_id: 'google_scanned_objects' #  03001627,  02958343, 03790512
+input_pc_generate_method: 'kaolin'  # blender, kaolin
+demo: False # if only run demo
+
+geo_root: None
+geo_from: 'POCO' # 'POCO', 'ours'
+load_exist_dense_img_path: None #'out_inference/google_scanned_objects/2024.01.30.11.51.30_ours_kaolin_DDNM_inpaint_google_scanned_objects'
+
+use_GT_geo_watertight: False
+use_GT_multi_view_img: False
+noise_stddev: None
+coords_scale: 1.0
+
+input_type: 'object'
+
+
+### output
+save_dir: 'out_inference' # for evaluation on datasets
+output_path: 'output' # for demo
+render_after_inference: True
+save_input_pc: True #True
+
+## recon
+project2mesh: False #True
+texture_gen_method: 'DDNM_inpaint' # ['linear', 'DDNM_inpaint',deblur','linear','nearest']
+
+## camera
+camera_distribution: fibonacci_sphere # 'fibonacci_sphere','self_defined','blender'
+cam_res: 512  # 256 rendering res
+view_num: 8
+
+## inpaint
+res: 256 # inpainting resolution
+point_size: 1 #2
+edge_point_size: 1
+
+# hidden point removal
+point_validation_by_o3d: True
+hidden_point_removal_radius: 100 # 100.0, 1000
+refine_point_validation_by_remove_abnormal_depth: False
+refine_res: 512
+
+# crop and rescale
+crop_img: True  #
+crop_padding: 0.05
+mask_ratio_thresh: 0.82 # 0.82 for everything else, 0.5 for diffPIR
+
+# unproject
+unproject_by: 'vertex'
+edge_dilate_kernels: [0] # 21 by default,  [0] to turn off NBF; or use multi-level NBF as: [21, 11, 7, 5, 3, 1]
+naive_face_view: False
+optimize_from: None
+xatlas_texture_res: 1024
+
+# not used
+smooth_mesh: False #!!!!!!!!!!! false for POCO
+sample_num: 100000
+

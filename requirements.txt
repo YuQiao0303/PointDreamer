@@ -1,0 +1,12 @@
+ninja
+xatlas
+gdown
+plyfile
+tensorboard
+scikit-image
+trimesh
+open3d
+munch
+pymcubes
+torch-geometric
+opencv-python

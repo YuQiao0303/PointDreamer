@@ -1,0 +1,37 @@
+config: configs/config_shapenet.yaml
+config_default: configs/config_default.yaml
+dataset_name: ShapeNet
+dataset_root: data/ShapeNet
+device: cuda
+experiment_name: null
+filter_name: null
+iter_nbr: 600000
+log_mode: interactive
+logging: INFO
+manifold_points: 30000 # 3000
+network_backbone: FKAConv
+network_decoder: InterpAttentionKHeadsNet
+network_decoder_k: 64
+network_latent_size: 32
+network_n_labels: 2
+non_manifold_points: 2048
+normals: false
+random_noise: None #0.005
+resume: false
+save_dir: results
+test_split: test
+threads: 8
+train_split: training
+training_batch_size: 16
+training_iter_nbr: 100000
+training_lr_start: 0.001
+training_random_rotation_x: null
+training_random_rotation_y: null
+training_random_rotation_z: null
+training_random_scale: null
+val_interval: 1
+val_num_mesh: null
+val_split: validation
+
+gen_subsample_manifold: 3000 # added by PointDreamer author
+gen_subsample_manifold_iter: 10
