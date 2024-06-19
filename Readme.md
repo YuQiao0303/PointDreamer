@@ -1,5 +1,5 @@
 # PointDreamer: 
-This repository contains the official implementation for the paper: PointDreamer: *''Zero-shot 3D Textured Mesh Reconstruction from Colored Point Cloud by 2D Inpainting''* by Qiao Yu, Xianzhi Li, Yuan Tang, Jinfeng Xu, Long Hu, Yixue Hao and Min Chen.
+This repository contains the official implementation for the paper: *''PointDreamer: Zero-shot 3D Textured Mesh Reconstruction from Colored Point Cloud by 2D Inpainting''* by Qiao Yu, Xianzhi Li, Yuan Tang, Jinfeng Xu, Long Hu, Yixue Hao and Min Chen.
 
 PointDreamer takes colored point clouds as input, and reconstructs corresponding high-quality textured meshes. **Arxiv paper coming soon!**
 
@@ -9,7 +9,7 @@ PointDreamer takes colored point clouds as input, and reconstructs corresponding
 ## Install
 We tested on torch2.0.0, cuda11.8. Other versions may also work.
 ```bash
-git clone https://github.com/Anomymous2024/PointDreamer.git
+git clone https://github.com/YuQiao0303/PointDreamer.git
 cd PointDreamer
 conda create --name pointdreamer python=3.8
 conda activate pointdreamer
@@ -21,7 +21,7 @@ pip install https://data.pyg.org/whl/torch-2.0.0%2Bcu118/torch_cluster-1.6.3%2Bp
 pip install requirements.txt
 ```
 
-Download pre-trained weights 'ShapeNet 3k, noise, no normals' of POCO, and put it like 'models/POCO/checkpoint.pth'
+Download pre-trained weights 'ShapeNet 3k, noise, no normals' of [POCO](https://github.com/valeoai/POCO), and put it like 'models/POCO/checkpoint.pth'
 
 ```bash
 wget https://github.com/valeoai/POCO/releases/download/v0.0.0/ShapeNet_3k.zip

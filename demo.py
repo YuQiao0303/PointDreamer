@@ -602,35 +602,35 @@ def recon_all_textured_meshes(cfg,inpainter,POCO_net,camera_info,pc_files,names)
         recon_one_textured_mesh(cfg,inpainter,POCO_net,camera_info,pc_files[i],names[i])
 
 
-''' Main '''
-parser = argparse.ArgumentParser("PointDreamer")
-parser.add_argument("--config", type=str, help="path to config file",default='configs/default.yaml')
-parser.add_argument("--pc_file", type=str, help="path to input point cloud file",default ='dataset/demo_data/clock.ply')
-args = parser.parse_args()
-cfg_file = args.config
-pc_file = args.pc_file
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser("PointDreamer")
+    parser.add_argument("--config", type=str, help="path to config file",default='configs/default.yaml')
+    parser.add_argument("--pc_file", type=str, help="path to input point cloud file",default ='dataset/demo_data/clock.ply')
+    args = parser.parse_args()
+    cfg_file = args.config
+    pc_file = args.pc_file
 
 
-name = os.path.basename(pc_file).split('.')[0] + '_' + os.path.basename(cfg_file).split('.')[0]
+    name = os.path.basename(pc_file).split('.')[0] + '_' + os.path.basename(cfg_file).split('.')[0]
 
 
-cfg,inpainter,POCO_net,camera_info,logger = prepare(cfg_file)
+    cfg,inpainter,POCO_net,camera_info,logger = prepare(cfg_file)
 
-shutil.copy(cfg_file,os.path.join(cfg.output_path,name,'config.yaml'))
-logger.info('Start Recon...')
-for i in range(1):
-    recon_one_textured_mesh(cfg,inpainter,POCO_net,camera_info, pc_file,name)
+    shutil.copy(cfg_file,os.path.join(cfg.output_path,name,'config.yaml'))
+    logger.info('Start Recon...')
+    for i in range(1):
+        recon_one_textured_mesh(cfg,inpainter,POCO_net,camera_info, pc_file,name)
 
-'''
-Example usage:
-python demo.py --config configs/default.yaml --pc_file dataset/demo_data/clock.ply
-python demo.py --config configs/default.yaml --pc_file dataset/demo_data/PaulFrankLunchBox.ply
-python demo.py --config configs/default.yaml --pc_file dataset/demo_data/rolling_lion.ply
+    '''
+    Example usage:
+    python demo.py --config configs/default.yaml --pc_file dataset/demo_data/clock.ply
+    python demo.py --config configs/default.yaml --pc_file dataset/demo_data/PaulFrankLunchBox.ply
+    python demo.py --config configs/default.yaml --pc_file dataset/demo_data/rolling_lion.ply
 
-python demo.py --config configs/default.yaml --pc_file dataset/NBF_demo_data/2ce6_chair.ply
-python demo.py --config configs/wo_NBF.yaml --pc_file dataset/NBF_demo_data/2ce6_chair.ply
+    python demo.py --config configs/default.yaml --pc_file dataset/NBF_demo_data/2ce6_chair.ply
+    python demo.py --config configs/wo_NBF.yaml --pc_file dataset/NBF_demo_data/2ce6_chair.ply
 
-'''
+    '''
 
 
     
