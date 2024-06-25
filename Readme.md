@@ -1,5 +1,7 @@
 # PointDreamer: 
-This repository contains the official implementation for the paper: *''PointDreamer: Zero-shot 3D Textured Mesh Reconstruction from Colored Point Cloud by 2D Inpainting''* by Qiao Yu, Xianzhi Li, Yuan Tang, Jinfeng Xu, Long Hu, Yixue Hao and Min Chen.
+[![arXiv](https://img.shields.io/badge/arXiv-2406.15811-b31b1b.svg)](https://arxiv.org/abs/2406.15811) 
+
+This repository contains the official implementation for the paper: *''[PointDreamer: Zero-shot 3D Textured Mesh Reconstruction from Colored Point Cloud by 2D Inpainting](https://arxiv.org/abs/2406.15811)''* by Qiao Yu, Xianzhi Li, Yuan Tang, Jinfeng Xu, Long Hu, Yixue Hao and Min Chen.
 
 PointDreamer takes colored point clouds as input, and reconstructs corresponding high-quality textured meshes. **Arxiv paper coming soon!**
 
