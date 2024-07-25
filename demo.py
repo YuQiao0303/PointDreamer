@@ -7,16 +7,16 @@ import torch
 device = torch.device('cuda')
 import kaolin as kal
 import nvdiffrast
-try:
-    glctx = nvdiffrast.torch.RasterizeGLContext(False, device=device) #
-except:
-    glctx = nvdiffrast.torch.RasterizeCudaContext(device=device)
-
+# try:
+#     glctx = nvdiffrast.torch.RasterizeGLContext(False, device=device) #
+# except:
+#     glctx = nvdiffrast.torch.RasterizeCudaContext(device=device)
+glctx = nvdiffrast.torch.RasterizeCudaContext(device=device)
 from utils.logger_util import get_logger
 from munch import Munch
 import yaml
 from pointdreamer.ours_utils import *
-from pointdreamer.unproject import unproject
+from pointdreamer.unproject import unproject,dilate_atlas,paint_invisible_areas_by_optimize,paint_invisible_areas_by_neighbors
 from utils.other_utils import read_ply_xyzrgb,save_colored_pc_ply
 from utils.camera_utils import create_cameras
 from utils.utils_2d import save_CHW_RGBA_img
@@ -25,6 +25,9 @@ import time
 
 import argparse
 print('finish import')
+
+
+
 
 def colorize_one_mesh(
         # name,root_path,cls_id,
@@ -142,10 +145,12 @@ def colorize_one_mesh(
                 # inpainted_img_path = os.path.join(load_path, f'{i}_inpainted.png')
 
                 inpainted_img_path = os.path.join(save_img_path, f'{i}.png')
-                inpainted_images[i] = load_CHW_RGB_img(inpainted_img_path).to(device)
+                if os.path.exists(inpainted_img_path):
+                    inpainted_images[i] = load_CHW_RGB_img(inpainted_img_path).to(device)
+                else:
+                    exist_inpainted_multiview_imgs=False
 
-
-        else: # inpaint now
+        if not exist_inpainted_multiview_imgs: # inpaint now
             inpainted_images = get_inpainted_images(sparse_imgs,hard_masks,hard_mask2s,save_img_path, inpainter,view_num,
                                                     method=texture_gen_method)
             
@@ -162,61 +167,88 @@ def colorize_one_mesh(
     ''' Unproject inpainted 2D rendered images back to 3D'''
     start_unproject = time.time()
 
-    atlas_img,shrinked_per_view_per_pixel_visibility = unproject(inpainted_images,vertices,f_normals,
+    atlas_img,shrinked_per_view_per_pixel_visibility,point_view_ids,points_atlas_pixel_coord,points,atlas_painted_mask = \
+    unproject(inpainted_images,vertices,f_normals,
                 res,
                 cams,cam_res,base_dirs,
                 gb_pos,mask,per_atlas_pixel_face_id,
                 uv_centers,uv_scales,padding,inpaint_scale_factors,
                 mesh_normalized_depths,edge_dilate_kernels,save_img_path)
+    # point_view_ids = torch.ones_like(point_view_ids).to(device)*-100.0 # use this to directly predicting colors by 3D optimization
+    # atlas_img = paint_invisible_areas_by_optimize(atlas_img,points,points_atlas_pixel_coord,point_view_ids,input_xyz=coords,input_rgb=colors)
+    to_inpaint_face_id = per_atlas_pixel_face_id[0][torch.logical_not(atlas_painted_mask)].unique()
+    to_inpaint_face_id = to_inpaint_face_id[to_inpaint_face_id>-1]
+    
+    use_atlas = True
+    if use_atlas:
+        atlas_img = paint_invisible_areas_by_neighbors(
+            vertices,faces,uvs,mesh_tex_idx,to_inpaint_face_id,atlas_img, atlas_painted_mask,use_atlas=True)
+        # atlas_img = dilate_atlas(atlas_img,mask)
 
-    try:
-        logger.info(f'unporject before optimize: {time.time() - start_unproject} s')
-    except:
-        pass
-
-    if optimize_from is not None:
-        start_optimzie = time.time()
-        if optimize_from != 'None':
-            # print('1. atlas_img.shape',atlas_img.shape) # [res,res,3]
-            eye_positions = torch.tensor(eye_positions).float().to(device)
-            up_dirs = torch.tensor(up_dirs).float().to(device)
-            look_ats = torch.zeros((len(eye_positions), 3)).to(device)
-            atlas_img = atlas_img.permute(2, 0, 1).flip(1)  # [3,res,res]
-
-            if optimize_from == 'scratch':
-                init_atlas = None
-                shrinked_per_view_per_pixel_visibility = None
-            elif optimize_from == 'naive': # naive:
-                init_atlas = atlas_img
-                shrinked_per_view_per_pixel_visibility = None
-            elif optimize_from == 'ours':
-                init_atlas = atlas_img
-
-
-            atlas_img, final_render_result = optimize_color(init_atlas, inpainted_images, vertices, faces, uvs,
-                                                            mesh_tex_idx, cams, eye_positions, look_ats, up_dirs,
-                                                            uv_centers, uv_scales, padding, inpaint_scale_factors,
-                                                            glctx,
-                                                            shrinked_per_view_per_pixel_visibility=
-                                                            shrinked_per_view_per_pixel_visibility)  # [1,3,res,res], # [view_num,3,res,res]
-            atlas_img = atlas_img[0].flip(1).permute(1, 2, 0)  # [res,res,3],
-            # for i in range(view_num):
-            #     save_CHW_RGB_img(final_render_result[i].detach().cpu().numpy(),
-            #                         os.path.join(root_path, 'meshes', cls_id, name, 'models',
-            #                                     f'final_render_result_{i}.png'))
-
-            # print('2. atlas_img.shape', atlas_img.shape)
         try:
-            logger.info(f' optimize: {time.time() - start_optimzie} s')
+            logger.info(f'unporject before optimize: {time.time() - start_unproject} s')
         except:
             pass
 
-    try:
-        logger.info(f'unproject: {time.time() - start_unproject} s')
-    except:
-        pass
+        if optimize_from is not None:
+            start_optimzie = time.time()
+            if optimize_from != 'None':
+                # print('1. atlas_img.shape',atlas_img.shape) # [res,res,3]
+                eye_positions = torch.tensor(eye_positions).float().to(device)
+                # up_dirs = torch.tensor(up_dirs).float().to(device)
+                look_ats = torch.zeros((len(eye_positions), 3)).to(device)
+                atlas_img = atlas_img.permute(2, 0, 1).flip(1)  # [3,res,res]
 
-    return vertices,uvs,faces,mesh_tex_idx,atlas_img,mask
+                if optimize_from == 'scratch':
+                    init_atlas = None
+                    shrinked_per_view_per_pixel_visibility = None
+                elif optimize_from == 'naive': # naive:
+                    init_atlas = atlas_img
+                    shrinked_per_view_per_pixel_visibility = None
+                elif optimize_from == 'ours':
+                    init_atlas = atlas_img
+
+
+                atlas_img, final_render_result = optimize_color(init_atlas, inpainted_images, vertices, faces, uvs,
+                                                                mesh_tex_idx, cams, eye_positions, look_ats, up_dirs,
+                                                                uv_centers, uv_scales, padding, inpaint_scale_factors,
+                                                                glctx,
+                                                                shrinked_per_view_per_pixel_visibility=
+                                                                shrinked_per_view_per_pixel_visibility)  # [1,3,res,res], # [view_num,3,res,res]
+                atlas_img = atlas_img[0].flip(1).permute(1, 2, 0)  # [res,res,3],
+                # for i in range(view_num):
+                #     save_CHW_RGB_img(final_render_result[i].detach().cpu().numpy(),
+                #                         os.path.join(root_path, 'meshes', cls_id, name, 'models',
+                #                                     f'final_render_result_{i}.png'))
+
+                # print('2. atlas_img.shape', atlas_img.shape)
+            try:
+                logger.info(f' optimize: {time.time() - start_optimzie} s')
+            except:
+                pass
+    
+        try:
+            logger.info(f'unproject: {time.time() - start_unproject} s')
+        except:
+            pass
+
+        return vertices,uvs,faces,mesh_tex_idx,atlas_img,mask
+    
+    else:
+        subdivided_vertices,subdivided_faces,subdevided_vert_colors = paint_invisible_areas_by_neighbors(
+        vertices,faces,uvs,mesh_tex_idx,to_inpaint_face_id,atlas_img, atlas_painted_mask,use_atlas=False)
+        mesh = trimesh.Trimesh(
+            vertices=subdivided_vertices.cpu().numpy(), 
+            faces=subdivided_faces.cpu().numpy(), 
+            vertex_colors=subdevided_vert_colors.cpu().numpy(),
+        )
+        mesh.export('subdivided.obj', 'obj')
+        return
+
+    
+    
+
+
 
 
 def save_textured_mesh(vertices,uvs,faces,mesh_tex_idx,atlas_img,mask,output_root_path):
@@ -238,16 +270,16 @@ def save_textured_mesh(vertices,uvs,faces,mesh_tex_idx,atlas_img,mask,output_roo
     tex_map = atlas_img
     img = np.asarray(tex_map.data.cpu().numpy(), dtype=np.float32)
     img = (img - lo) * (255 / (hi - lo))
-    dilate_mask = mask[0] # from [1,res,res,1] to [1,res,res]
-    # dilate_mask = dilate_mask.detach().cpu().numpy()
-    img *= dilate_mask.detach().cpu().numpy()  # added by PointDreamer author, necessary to enable later dialate
-    img = img.clip(0, 255)
-    dilate_mask = np.sum(img.astype(float), axis=-1,
-                    keepdims=True)  # mask = np.sum(img.astype(np.float), axis=-1, keepdims=True)
-    dilate_mask = (dilate_mask <= 3.0).astype(float)  # mask = (mask <= 3.0).astype(np.float)
-    kernel = np.ones((3, 3), 'uint8')
-    dilate_img = cv2.dilate(img, kernel, iterations=1)  # without this, some faces will have edges with wrong colors
-    img = img * (1 - dilate_mask) + dilate_img * dilate_mask
+    # dilate_mask = mask[0] # from [1,res,res,1] to [1,res,res]
+    # # dilate_mask = dilate_mask.detach().cpu().numpy()
+    # img *= dilate_mask.detach().cpu().numpy()  # added by PointDreamer author, necessary to enable later dialate
+    # img = img.clip(0, 255)
+    # dilate_mask = np.sum(img.astype(float), axis=-1,
+    #                 keepdims=True)  # mask = np.sum(img.astype(np.float), axis=-1, keepdims=True)
+    # dilate_mask = (dilate_mask <= 3.0).astype(float)  # mask = (mask <= 3.0).astype(np.float)
+    # kernel = np.ones((3, 3), 'uint8')
+    # dilate_img = cv2.dilate(img, kernel, iterations=1)  # without this, some faces will have edges with wrong colors
+    # img = img * (1 - dilate_mask) + dilate_img * dilate_mask
     img = img.clip(0, 255).astype(np.uint8)
 
     print('img.shape',img.shape)
@@ -267,12 +299,12 @@ def prepare(cfg_file):
 
     # load inpainter
     inpainter = None
-    # if cfg.texture_gen_method == 'DDNM_inpaint':
-    #     logger.info('Loading inpainter...')
-    #     from models.DDNM.ddnm_inpainting import Inpainter
+    if cfg.texture_gen_method == 'DDNM_inpaint':
+        logger.info('Loading inpainter...')
+        from models.DDNM.ddnm_inpainting import Inpainter
 
-    #     inpainter = Inpainter(device)
-    #     logger.info('inpainter loaded')
+        inpainter = Inpainter(device)
+        logger.info('inpainter loaded')
     
     # load cameras
     cams,base_dirs,eye_positions,up_dirs = create_cameras(num_views=cfg.view_num,
@@ -369,6 +401,8 @@ def recon_one_textured_mesh(cfg,inpainter,POCO_net,camera_info,pc_file,name):
         logger.info('Conducting UV Unwrapping...')
         uvs, mesh_tex_idx, gb_pos, mask,per_atlas_pixel_face_id = xatlas_uvmap_w_face_id(
             glctx, vertices, faces, resolution=cfg.xatlas_texture_res)
+        import kiui
+
         xatlas_dict = {'uvs': uvs, 'mesh_tex_idx': mesh_tex_idx, 'gb_pos': gb_pos, 
                        'mask': mask,'per_atlas_pixel_face_id':per_atlas_pixel_face_id}
         # os.makedirs(os.path.dirname(xatlas_save_path), exist_ok=True)

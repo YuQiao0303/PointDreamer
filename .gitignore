@@ -12,6 +12,7 @@ vis_results/
 geo_out/
 training/out/
 depth_renderer/geo_inference/
+temp/
 
 build/
 dist/
