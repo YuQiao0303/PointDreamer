@@ -15,17 +15,17 @@ https://github.com/YuQiao0303/PointDreamer/assets/28769198/12d16fb7-ae71-4367-81
 - 2024.06.27: A Colab demo is now avaliable! Test by opening 'PointDreamer_demo.ipynb' in Colab.
 
 ## Install
-We tested on torch2.0.0, cuda11.8. Other versions may also work.
+We tested on torch2.1.0, cuda11.8. Other versions may also work.
 ```bash
 git clone https://github.com/YuQiao0303/PointDreamer.git
 cd PointDreamer
 conda create --name pointdreamer python=3.8
 conda activate pointdreamer
 
-pip install torch==2.0.0  torchvision==0.15.1 --index-url https://download.pytorch.org/whl/cu118
-pip install kaolin==0.15.0 -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.0.0_cu118.html
+pip install torch==2.1.0  torchvision==0.16.0 --index-url https://download.pytorch.org/whl/cu118
+pip install kaolin==0.15.0 -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.1.0_cu118.html
 pip install git+https://github.com/NVlabs/nvdiffrast/
-pip install https://data.pyg.org/whl/torch-2.0.0%2Bcu118/torch_cluster-1.6.3%2Bpt20cu118-cp38-cp38-linux_x86_64.whl
+pip install https://data.pyg.org/whl/torch-2.1.0%2Bcu118/torch_cluster-1.6.3%2Bpt21cu118-cp38-cp38-linux_x86_64.whl
 pip install requirements.txt
 ```
 

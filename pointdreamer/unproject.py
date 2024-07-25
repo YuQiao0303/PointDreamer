@@ -6,90 +6,229 @@ import cv2
 import math
 from utils.utils_2d import display_CHW_RGB_img_np_matplotlib,cat_images,save_CHW_RGB_img,detect_edges_in_gray_by_scharr
 from utils.utils_2d import detect_edges_in_gray_by_scharr_torch_batch,dilate_torch_batch
+from pointdreamer.ours_utils import get_point_validation_by_depth
+import time
+
+def unproject(inpainted_images,vertices,f_normals,
+              view_img_res,
+              cams,cam_res,base_dirs,
+              gb_pos,mask,per_atlas_pixel_face_id,
+              uv_centers,uv_scales,padding,inpaint_scale_factors,
+              mesh_normalized_depths,edge_dilate_kernels,save_img_path):
+    with torch.no_grad():
+        '''
+        uvs:                per mesh vertex uv:                     [vert_num, 2]
+        mesh_tex_idx:       per face uv coord id (to index uvs):    [face_num,3]
+        gb_pos:             per pixel 3D coordinate:                [1,res,res,3] 
+        mask:               per pixel validation:                   [1,res,res,1]
+        per_pixel_face_id:  per pixel face id:                      [1,res,res]
+        
+        '''
+
+        # view_img_res = res
+        # res = xatlas_texture_res
+        res = mask.shape[1]
+        view_num = len(cams)
+        device = vertices.device
+
+        per_pixel_mask = mask[0,:,:,0] # [res,res]
+        per_pixel_point_coord = gb_pos[0] # [res,res,3]
+        per_atlas_pixel_face_id = per_atlas_pixel_face_id[0] #[1,res,res]
+
+        per_pixel_pixel_coord = torch.zeros((res,res,2),device=device).long()
+        xx, yy = torch.meshgrid(torch.arange(res).to(device), torch.arange(res).to(device))
+        per_pixel_pixel_coord[:, :, 0] = xx
+        per_pixel_pixel_coord[:, :, 1] = yy
+
+        points = per_pixel_point_coord[per_pixel_mask] # [?,3] ??
+        points_atlas_pixel_coord = per_pixel_pixel_coord[per_pixel_mask].long() # [?,2] ??
+
+
+        # get per-atlas-pixel's corresponding depth and uv in multiview images 
+        # (depth used for calculating visibility, uv used for query correspondign color)
+
+        transformed_points = torch.zeros((len(cams), points.shape[0], 3), device=vertices.device)
+        for i, cam in enumerate(cams):
+            transformed_points[i] = cam.transform(points)
+        per_view_per_point_depths = transformed_points[ ..., 2]
+        per_view_per_point_uvs = transformed_points[..., :2]
+        per_view_per_point_uvs = (per_view_per_point_uvs - uv_centers) / uv_scales  # now all between -0.5, 0.5
+
+
+        per_view_per_point_uvs_no_scale = per_view_per_point_uvs.clone()
+        per_view_per_point_uvs = per_view_per_point_uvs * inpaint_scale_factors.unsqueeze(-1).unsqueeze(-1)
+
+
+        per_view_per_point_uvs = per_view_per_point_uvs * (1 - 2 * padding)  # now all between -0.45, 0.45
+        per_view_per_point_uvs= per_view_per_point_uvs + 0.5  # now all between 0.05, 0.95
+
+        per_view_per_point_uvs_no_scale = per_view_per_point_uvs_no_scale * (1 - 2 * padding)  # now all between -0.45, 0.45
+        per_view_per_point_uvs_no_scale= per_view_per_point_uvs_no_scale + 0.5  # now all between 0.05, 0.95
+
+
+        # Get per-atls-pixel  visibility by depth (so that we have per-view visible atlas)
+        per_view_per_point_visibility,_ = get_point_validation_by_depth(cam_res,per_view_per_point_uvs_no_scale,
+                                        per_view_per_point_depths,mesh_normalized_depths,offset = 0.0001,
+                                                                        vis=False)# [cam_num, point_num]
+
+        start_shrink_visibility = time.time()
+     
+
+
+        per_atlas_pixel_per_view_visibility = torch.zeros((res,res,view_num),device=device).bool()
+
+        per_atlas_pixel_per_view_visibility[per_pixel_mask] = per_view_per_point_visibility.permute(1,0)#.clone() # (res,res,view_num)
+
+        # shrink per-view visible atlas (remove border areas, only keep non-border areas for later use)
+        per_kernel_per_view_shrinked_per_pixel_visibility = get_shrinked_per_view_per_pixel_visibility_torch(
+            per_pixel_mask,per_atlas_pixel_per_view_visibility,
+            kernel_sizes= edge_dilate_kernels*(res//256),
+            save_path = os.path.join(save_img_path,'shrink_per_view_edge')) # [kernel_num,view_num,res,res]
+     
+        # try:
+        #     logger.info(f'shrink visibility: {time.time() - start_shrink_visibility} s')
+        # except:
+        #     pass
+
+        # Get direction priority (similarity between point normal and view_dir)
+        per_atlas_pixel_face_normal = f_normals[per_atlas_pixel_face_id] #res,res,3
+        # print('f_normals.shape',f_normals.shape) #[face_num,3]
+        # print('per_atlas_pixel_face_id.shape',per_atlas_pixel_face_id.shape) #[res,res]
+        # print('per_atlas_pixel_face_normal.shape', per_atlas_pixel_face_normal.shape)
+        per_point_face_normal = per_atlas_pixel_face_normal[per_pixel_mask] # [?,3]
+
+
+        similarity_between_point_normal_and_view_dir = per_point_face_normal @ torch.tensor(base_dirs,
+                                                                                            device=device).t()  # [ point_num,view_num]
+
+        # Get per view per point pixel (for each point, its corresponding pixel coordnate in each view image)
+        per_view_per_point_pixel = per_view_per_point_uvs * view_img_res
+        per_view_per_point_pixel = per_view_per_point_pixel.clip(0, view_img_res - 1)
+        per_view_per_point_pixel = per_view_per_point_pixel.long()
+        per_view_per_point_pixel = torch.cat((per_view_per_point_pixel[:, :, 1].unsqueeze(-1),
+                                                per_view_per_point_pixel[:, :, 0].unsqueeze(-1)),
+                                    dim=-1)  # switch x and y if you ever need to query pixel coordiantes
 
 
 
-# def get_border_area_in_atlax_view_id_torch_batch(per_pixel_view_id,background_edges_mask,dilate_kernel_size =11,save_path=None):
-#     '''
+        # per_point_view_weight =  similarity_between_point_normal_and_view_dir
+        # per_point_view_weight[~(per_view_per_point_visibility.permute(1,0).bool())] -=100
+        '''24.01.05: Non-Border-First Unprojection (UBF)'''
+        point_num = per_point_face_normal.shape[0]
+        # candidate_per_point_per_view_mask = torch.ones((point_num,view_num)).bool().to(device) # [point_num,view_num]
 
-#     :param per_pixel_view_id: [res,res], -1 means background
-#     :param atlas_img_view_id: [3,res,res], black means background
-#     :return:
-#     '''
-#     # if per_pixel_view_id.max()-1 > view_num:
-#     #     view_num = per_pixel_view_id.max()-1
-#     # img = per_pixel_view_id+1
-#     # res = img.shape[0]
-#     #
-#     #
-#     #
-#     # uint8_img = img * math.floor((255.0/(view_num-1)))
-#     # # print('uint8_img',uint8_img.min(),uint8_img.max(),uint8_img)
-#     # uint8_img = np.clip(uint8_img, 0, 255)
-#     # uint8_img = uint8_img.astype(np.uint8)
-#     #
-#     # # detect edges:
-#     # im1x = cv2.Scharr(uint8_img, cv2.CV_64F, 1, 0)
-#     # im1y = cv2.Scharr(uint8_img, cv2.CV_64F, 0, 1)
-#     # im1x = cv2.convertScaleAbs(im1x)
-#     # im1y = cv2.convertScaleAbs(im1y)
-#     # edges = cv2.addWeighted(im1x, 0.5, im1y, 0.5, 0)
-#     #
-#     #
-#     #
-#     #
-#     # edge_thresh = math.floor((255.0/(view_num-1))) -1
-#     # edge_mask = edges > edge_thresh # res,res
-#     #
-#     # # vis = False
-#     # # if vis:
-#     # #     edges_binary = edges.copy()
-#     # #     edges_binary[edges > edge_thresh] = 0
-#     # #     edges_binary[edges <= edge_thresh] = 255 # res,res
-#     # #     src_img_color = cv2.cvtColor(uint8_img, cv2.COLOR_GRAY2BGR)  # [H,W,3]
-#     # #     src_img_color_with_edges = src_img_color.copy() # [H,W,3]
-#     # #     src_img_color_with_edges[edges > edge_thresh] = (0, 0, 255)  # [H,W,3]
-#     # #     display_CHW_RGB_img_np_matplotlib(src_img_color_with_edges.transpose(2, 0, 1))
+        # first use shrinked visibility (only contains non-border areas) 
+        shrinked_per_view_per_pixel_visibility = per_kernel_per_view_shrinked_per_pixel_visibility[0]
+        shrinked_per_view_per_point_visibility = \
+            shrinked_per_view_per_pixel_visibility.permute(1, 2, 0)[per_pixel_mask].permute(1, 0)
 
-#     # if per_pixel_view_id.max() + 1 > view_num:
-#     #     view_num = per_pixel_view_id.max() + 1
-#     view_num = per_pixel_view_id.max() + 1
+        candidate_per_point_per_view_mask = \
+            shrinked_per_view_per_point_visibility.permute(1, 0)  # [point_num,view_num]
 
-#     uint8_img = per_pixel_view_id * math.floor((255.0 / (view_num - 1)))
-#     uint8_img = torch.clip(uint8_img, 0, 255)#.astype(np.uint8)
+        # multi-level NBF: the size of border areas can be controled by the dilation kernels
+        for i in range(1,len(edge_dilate_kernels)):
+            # if a point is not visible in any view, try less tight mask 
+            # (we have multiple shrinked visibility mask with different dilation kernels. 
+            # a smaller kernel means a smaller area is regarded as border area, which enables more areas to be considered by projection (less tight mask)
+            per_point_left_view_num = candidate_per_point_per_view_mask.sum(1)
 
-#     ### Get edges
+            shrinked_per_view_per_pixel_visibility = per_kernel_per_view_shrinked_per_pixel_visibility[i]
+            shrinked_per_view_per_point_visibility = \
+                shrinked_per_view_per_pixel_visibility.permute(1, 2, 0)[per_pixel_mask].permute(1, 0)
+
+            candidate_per_point_per_view_mask[per_point_left_view_num < 1, :] = \
+                torch.logical_or(
+                    candidate_per_point_per_view_mask[per_point_left_view_num < 1, :],
+                    shrinked_per_view_per_point_visibility.permute(1, 0)[per_point_left_view_num < 1, :]
+                )
 
 
-#     edge_thresh = math.floor((255.0 / (view_num))) - 1
-#     edges = detect_edges_in_gray_by_scharr(uint8_img)
-#     edge_mask = edges > edge_thresh  # res,res
-#     edge_mask = edge_mask * ~background_edges_mask
+        # if a point is not visible in any view's non-border area, now we consider all areas, no matter border or not, by using the unshrinked visibility
+        per_point_left_view_num = candidate_per_point_per_view_mask.sum(1)
+        candidate_per_point_per_view_mask[per_point_left_view_num < 1, :] = \
+            torch.logical_or(
+                candidate_per_point_per_view_mask[per_point_left_view_num < 1, :],
+                per_view_per_point_visibility.permute(1, 0)[per_point_left_view_num < 1, :]
+            )
 
 
-#     # get border area by dilating edges
-#     dilate_kernel = np.ones((dilate_kernel_size, dilate_kernel_size), np.uint8)
-#     dilate_iterations = 1
-#     border_mask = cv2.dilate(edge_mask.astype(np.uint8)*255, dilate_kernel,
-#                                          iterations=dilate_iterations).astype(np.bool_) # [res,res]
+        # now choose the ones with best normal similarity
+        per_point_per_view_weight = torch.softmax(similarity_between_point_normal_and_view_dir,1) # [pointnum, view_num]
+        per_point_per_view_weight[~candidate_per_point_per_view_mask] = -100
+        point_view_ids = torch.argmax(per_point_per_view_weight, dim=1)
+        # point_view_ids[candidate_per_point_per_view_mask.sum(1)<1] = view_num # if has no visible view, make it black
+        # per_point_left_view_num = candidate_per_point_per_view_mask.sum(1)
+        # candidate_per_point_per_view_mask[per_point_left_view_num > 1] = \
+        #     candidate_per_point_per_view_mask[
+        #         per_point_left_view_num > 1] * ~best_normal_per_point_per_view_mask[per_point_left_view_num>1]
+        # # get the final result
+        # point_view_ids = torch.argmax(candidate_per_point_per_view_mask.long(), dim=1)
 
 
-#     if save_path is not None:
-#         os.makedirs(os.path.dirname(save_path),exist_ok=True)
-#         edges_binary = edges.copy()
-#         edges_binary[edges > edge_thresh] = 0
-#         edges_binary[edges <= edge_thresh] = 255  # res,res
 
-#         src_img_color = cv2.cvtColor(uint8_img, cv2.COLOR_GRAY2BGR)  # [H,W,3]
-#         src_img_color_with_edges = src_img_color.copy()  # [H,W,3]
-#         src_img_color_with_edges[background_edges_mask] = (255, 0, 0)  # [H,W,3]
-#         src_img_color_with_edges[edges > edge_thresh] = (0, 0, 255)  # [H,W,3]
+        single_view_atlas_imgs = torch.zeros((view_num,res, res, 3), device=device)
+        single_view_atlas_masks = torch.zeros((view_num,res, res, 3), device=device).bool()
+        atlas_img = torch.zeros((res, res, 3), device=device)
+        per_pixel_view_id = -torch.ones((res,res),device=device).long()
 
-#         cat = cat_images(src_img_color_with_edges.transpose(2, 0, 1), edge_mask[np.newaxis, ...])
-#         cat = cat_images(cat,np.repeat((border_mask.astype(np.float)/1.0)[np.newaxis, ...],3,0))
-#         save_CHW_RGB_img(cat[:,::-1,:],save_path)
 
-#     return edge_mask,border_mask # both [res,res]
+
+        # paint each pixel in the atlas by the query color in each view img
+        for i in range(len(cams)):
+
+            point_this_view_mask = point_view_ids == i
+
+            view_img = inpainted_images[i]
+            view_img = torch.flip(view_img,[1]) # flip upside down
+            view_img = view_img.permute(1,2,0) # HWC
+
+            atlas_img[points_atlas_pixel_coord[point_this_view_mask][:, 0],
+                        points_atlas_pixel_coord[point_this_view_mask][:, 1]] = \
+                view_img[per_view_per_point_pixel[i][point_this_view_mask][:,0],
+                            per_view_per_point_pixel[i][point_this_view_mask][:,1]]
+
+            per_pixel_view_id[points_atlas_pixel_coord[point_this_view_mask][:, 0],
+                        points_atlas_pixel_coord[point_this_view_mask][:, 1]] = i
+
+
+            ################
+            per_view_per_point_visibility
+            shrinked_per_view_per_point_visibility
+            all_visible_point_this_view_mask = shrinked_per_view_per_point_visibility.bool()[i]
+            single_view_atlas_imgs[i][points_atlas_pixel_coord[all_visible_point_this_view_mask][:, 0],
+                        points_atlas_pixel_coord[all_visible_point_this_view_mask][:, 1]] = \
+                view_img[per_view_per_point_pixel[i][all_visible_point_this_view_mask][:,0],
+                            per_view_per_point_pixel[i][all_visible_point_this_view_mask][:,1]]
+
+
+            single_view_atlas_masks[i][points_atlas_pixel_coord[all_visible_point_this_view_mask][:, 0],
+                                        points_atlas_pixel_coord[all_visible_point_this_view_mask][:, 1]] = True
+            # single_view_atlas_imgs[i][~single_view_atlas_masks[i][..., 0]] = palette[i]
+
+            # save_CHW_RGB_img(single_view_atlas_imgs[i].permute(2,0,1).detach().cpu().numpy()[:, ::-1, :],
+            #                     os.path.join(root_path,'meshes',cls_id, name, 'models',f'atlax_view_{i}.png'))
+
+      
+        # dialate # without this, face edges will look weird
+        tex_map = atlas_img
+        lo, hi = (0, 1)
+        img = np.asarray(tex_map.data.cpu().numpy(), dtype=np.float32)
+        img = (img - lo) * (255 / (hi - lo))
+        dilate_mask = mask[0]  # from [1,res,res,1] to [1,res,res]
+        img *= dilate_mask.detach().cpu().numpy()  # added by PointDreamer author, necessary to enable later dialate
+        img = img.clip(0, 255)
+        dilate_mask = np.sum(img.astype(float), axis=-1,
+                        keepdims=True)  # mask = np.sum(img.astype(np.float), axis=-1, keepdims=True)
+        dilate_mask = (dilate_mask <= 3.0).astype(float)  # mask = (mask <= 3.0).astype(np.float)
+        kernel = np.ones((3, 3), 'uint8')
+        kernel *= res // 256
+        dilate_img = cv2.dilate(img, kernel, iterations=1)  # without this, some faces will have edges with wrong colors
+        img = img * (1 - dilate_mask) + dilate_img * dilate_mask
+        img = img.clip(0, 255) #.astype(np.uint8)
+        atlas_img = torch.tensor(img/255.0).to(device).float()
+        return atlas_img,shrinked_per_view_per_pixel_visibility
+    
+
 
 
 def get_shrinked_per_view_per_pixel_visibility_torch(per_pixel_mask,per_atlas_pixel_per_view_visibility,
@@ -141,448 +280,4 @@ def get_shrinked_per_view_per_pixel_visibility_torch(per_pixel_mask,per_atlas_pi
             save_CHW_RGB_img(cat[:,::-1,:],os.path.join(save_path,f'{i}.png'))
     return per_kernel_per_view_shrinked_per_pixel_visibility
 
-
-# def get_border_area_in_atlax_img(atlas_img,background_edges_mask,edge_thresh=125,dilate_kernel_size =11):
-
-#     # if per_pixel_view_id.max()-1 > view_num:
-#     #     view_num = per_pixel_view_id.max()-1
-#     # img = per_pixel_view_id+1
-#     # res = img.shape[0]
-#     #
-#     #
-#     #
-#     # uint8_img = img * math.floor((255.0/(view_num-1)))
-#     # # print('uint8_img',uint8_img.min(),uint8_img.max(),uint8_img)
-#     # uint8_img = np.clip(uint8_img, 0, 255)
-#     # uint8_img = uint8_img.astype(np.uint8)
-#     #
-#     # # detect edges:
-#     # im1x = cv2.Scharr(uint8_img, cv2.CV_64F, 1, 0)
-#     # im1y = cv2.Scharr(uint8_img, cv2.CV_64F, 0, 1)
-#     # im1x = cv2.convertScaleAbs(im1x)
-#     # im1y = cv2.convertScaleAbs(im1y)
-#     # edges = cv2.addWeighted(im1x, 0.5, im1y, 0.5, 0)
-#     #
-#     #
-#     #
-#     #
-#     # edge_thresh = math.floor((255.0/(view_num-1))) -1
-#     # edge_mask = edges > edge_thresh # res,res
-#     #
-#     # # vis = False
-#     # # if vis:
-#     # #     edges_binary = edges.copy()
-#     # #     edges_binary[edges > edge_thresh] = 0
-#     # #     edges_binary[edges <= edge_thresh] = 255 # res,res
-#     # #     src_img_color = cv2.cvtColor(uint8_img, cv2.COLOR_GRAY2BGR)  # [H,W,3]
-#     # #     src_img_color_with_edges = src_img_color.copy() # [H,W,3]
-#     # #     src_img_color_with_edges[edges > edge_thresh] = (0, 0, 255)  # [H,W,3]
-#     # #     display_CHW_RGB_img_np_matplotlib(src_img_color_with_edges.transpose(2, 0, 1))
-
-#     res = atlas_img.shape[0]
-
-#     res = atlas_img.shape[1]
-#     uint8_img = atlas_img * 255.0
-#     uint8_img = np.clip(uint8_img, 0, 255)
-#     uint8_img = uint8_img.astype(np.uint8)
-#     # detect edges:
-
-#     b, g, r = cv2.split(uint8_img)
-
-#     # edges_b = cv2.Canny(b, 50, 150)
-#     # edges_g = cv2.Canny(g, 50, 150)
-#     # edges_r = cv2.Canny(r, 50, 150)
-#     # weights = [0.33, 0.33, 0.33]
-#     # edges = np.average([edges_b, edges_g, edges_r], axis=0, weights=weights)
-#     im1rx = cv2.Scharr(r, cv2.CV_64F, 1, 0)
-#     im1ry = cv2.Scharr(r, cv2.CV_64F, 0, 1)
-#     im1rx = cv2.convertScaleAbs(im1rx)
-#     im1ry = cv2.convertScaleAbs(im1ry)
-#     edges_r = cv2.addWeighted(im1rx, 0.5, im1ry, 0.5, 0)
-
-#     im1gx = cv2.Scharr(g, cv2.CV_64F, 1, 0)
-#     im1gy = cv2.Scharr(g, cv2.CV_64F, 0, 1)
-#     im1gx = cv2.convertScaleAbs(im1gx)
-#     im1gy = cv2.convertScaleAbs(im1gy)
-#     edges_g = cv2.addWeighted(im1gx, 0.5, im1gy, 0.5, 0)
-
-#     im1bx = cv2.Scharr(b, cv2.CV_64F, 1, 0)
-#     im1by = cv2.Scharr(b, cv2.CV_64F, 0, 1)
-#     im1bx = cv2.convertScaleAbs(im1bx)
-#     im1by = cv2.convertScaleAbs(im1by)
-#     edges_b = cv2.addWeighted(im1bx, 0.5, im1by, 0.5, 0)
-
-#     weights = [0.33, 0.33, 0.33]
-#     edges = np.average([edges_b, edges_g, edges_r], axis=0, weights=weights)
-#     print('edges.shape', edges.shape)
-
-
-
-#     edge_mask = edges > edge_thresh  # res,res
-#     edge_mask = edge_mask * ~background_edges_mask
-
-#     # get border area by dilating edges
-#     dilate_kernel = np.ones((dilate_kernel_size, dilate_kernel_size), np.uint8)
-#     dilate_iterations = 1
-#     border_mask = cv2.dilate(edge_mask.astype(np.uint8) * 255, dilate_kernel,
-#                              iterations=dilate_iterations).astype(np.bool_)  # [res,res]
-
-#     # vis = True
-#     # if vis:
-#     #     edges_binary = edges.copy()
-#     #     edges_binary[edges > edge_thresh] = 0
-#     #     edges_binary[edges <= edge_thresh] = 255  # res,res
-#     #     src_img_color = cv2.cvtColor(uint8_img, cv2.COLOR_GRAY2BGR)  # [H,W,3]
-#     #     src_img_color_with_edges = src_img_color.copy()  # [H,W,3]
-#     #     src_img_color_with_edges[edges > edge_thresh] = (0, 0, 255)  # [H,W,3]
-#     #     cat = cat_images(src_img_color_with_edges.transpose(2, 0, 1), edge_mask[np.newaxis, ...])
-#     #     cat = cat_images(cat,np.repeat((border_mask.astype(np.float)/1.0)[np.newaxis, ...],3,0))
-#     #     display_CHW_RGB_img_np_matplotlib(cat)
-
-#     return edge_mask,border_mask # both [res,res]
-
-
-
-# def get_connected_components_in_atlax_view_id(per_pixel_view_id,view_num = 8):
-#     '''
-
-#         :param per_pixel_view_id:
-#         :param edge_mask: [res,res]
-#         :param view_num:
-#         :return:
-#         '''
-#     res = per_pixel_view_id.shape[0]
-#     foreground_mask = per_pixel_view_id > -1
-
-#     if per_pixel_view_id.max() + 1 > view_num:
-#         view_num = per_pixel_view_id.max() + 1
-
-#     total_connected_area_num = 0
-#     all_connected_area_labels = -np.ones((res, res)).astype(np.int)
-
-#     for i in range(view_num):
-#         this_view_mask = per_pixel_view_id == i
-#         view_img = np.zeros((res, res)).astype(np.uint8)
-#         view_img[this_view_mask] = 1
-#         num_labels, labels = cv2.connectedComponents(view_img, connectivity=8)
-#         num_labels -= 1 # we don't need background to have any label
-#         back_ground_label = labels[~foreground_mask][0]
-
-#         all_connected_area_labels[labels != back_ground_label] = labels[
-#                                                                      labels != back_ground_label] + total_connected_area_num
-#         total_connected_area_num += num_labels
-
-#     # vis = True
-#     # if vis:
-#     #     colors = np.random.randint(0, 255, size=(total_connected_area_num, 3), dtype=np.uint8)
-#     #     color_img = np.zeros((res, res, 3), dtype=np.uint8)
-#     #
-#     #     for i in range(total_connected_area_num):
-#     #         color_img[all_connected_area_labels == i] = colors[i]
-#     #
-#     #     display_CHW_RGB_img_np_matplotlib(color_img.transpose(2, 0, 1) / 255.0)
-#     return total_connected_area_num,all_connected_area_labels
-
-
-# def get_notable_area_in_atlax_view_id(per_pixel_view_id,view_num = 8):
-#     '''
-
-#     :param per_pixel_view_id:
-#     :param edge_mask: [res,res]
-#     :param view_num:
-#     :return:
-#     '''
-#     res = per_pixel_view_id.shape[0]
-#     foreground_mask = per_pixel_view_id > -1
-
-
-
-#     if per_pixel_view_id.max()-1 > view_num:
-#         view_num = per_pixel_view_id.max()-1
-
-
-
-#     total_connected_area_num = 0
-#     all_connected_area_labels = np.zeros((res,res)).astype(np.int)
-
-
-
-
-#     for i in range(view_num):
-#         this_view_mask = per_pixel_view_id == i
-#         view_img = np.zeros((res,res)).astype(np.uint8)
-#         view_img[this_view_mask] = 1
-#         num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(view_img, connectivity=8)
-
-#         back_ground_label = np.argmax(stats[:,4])
-#         all_connected_area_labels[labels!=back_ground_label] = labels[labels!=back_ground_label]+total_connected_area_num
-#         total_connected_area_num += num_labels
-
-
-
-#     colors = np.random.randint(0, 255, size=(total_connected_area_num, 3), dtype=np.uint8)
-#     color_img = np.zeros((res, res, 3), dtype=np.uint8)
-#     uv_view_id_notable_area_mask = np.zeros((res, res), dtype=np.bool_)
-
-
-
-#     pixel_num_thresh = 25000#25000 #  999999999
-#     for i in range(total_connected_area_num):
-#         pixel_num = (all_connected_area_labels==i).astype(np.int32).sum()
-
-#         if pixel_num< pixel_num_thresh:
-#             color_img[all_connected_area_labels == i] = colors[i]
-#             uv_view_id_notable_area_mask[all_connected_area_labels == i] = True
-
-
-#     # display_CHW_RGB_img_np_matplotlib(color_img.transpose(2, 0, 1) / 255.0)
-#     return uv_view_id_notable_area_mask
-
-
-# def get_notable_area_in_atlax_color(atlax_img,edge_thresh=100,pixel_num_thresh=25000,area_expand_thresh=3):
-#     '''
-
-#     :param atlax_img: [res,res,3]
-#     :param edge_thresh:
-#     :return:
-#     '''
-#     res = atlax_img.shape[1]
-#     uint8_img = atlax_img * 255.0
-#     uint8_img = np.clip(uint8_img, 0, 255)
-#     uint8_img = uint8_img.astype(np.uint8)
-#     # detect edges:
-#     print('uint8_img.shape',uint8_img.shape)
-#     b, g, r = cv2.split(uint8_img)
-
-
-#     # edges_b = cv2.Canny(b, 50, 150)
-#     # edges_g = cv2.Canny(g, 50, 150)
-#     # edges_r = cv2.Canny(r, 50, 150)
-#     # weights = [0.33, 0.33, 0.33]
-#     # edges = np.average([edges_b, edges_g, edges_r], axis=0, weights=weights)
-#     im1rx = cv2.Scharr(r, cv2.CV_64F, 1, 0)
-#     im1ry = cv2.Scharr(r, cv2.CV_64F, 0, 1)
-#     im1rx = cv2.convertScaleAbs(im1rx)
-#     im1ry = cv2.convertScaleAbs(im1ry)
-#     edges_r = cv2.addWeighted(im1rx, 0.5, im1ry, 0.5, 0)
-
-#     im1gx = cv2.Scharr(g, cv2.CV_64F, 1, 0)
-#     im1gy = cv2.Scharr(g, cv2.CV_64F, 0, 1)
-#     im1gx = cv2.convertScaleAbs(im1gx)
-#     im1gy = cv2.convertScaleAbs(im1gy)
-#     edges_g = cv2.addWeighted(im1gx, 0.5, im1gy, 0.5, 0)
-
-#     im1bx = cv2.Scharr(b, cv2.CV_64F, 1, 0)
-#     im1by = cv2.Scharr(b, cv2.CV_64F, 0, 1)
-#     im1bx = cv2.convertScaleAbs(im1bx)
-#     im1by = cv2.convertScaleAbs(im1by)
-#     edges_b = cv2.addWeighted(im1bx, 0.5, im1by, 0.5, 0)
-
-#     weights = [0.33, 0.33, 0.33]
-#     edges = np.average([edges_b, edges_g, edges_r], axis=0, weights=weights)
-#     print('edges.shape',edges.shape)
-
-#     src_img_color = uint8_img #cv2.cvtColor(uint8_img, cv2.COLOR_GRAY2BGR)
-
-#     edges_binary = edges.copy().astype(np.uint8)
-#     edges_binary[edges > edge_thresh] = 0
-#     edges_binary[edges <= edge_thresh] = 255
-#     num_labels, labels = cv2.connectedComponents(edges_binary, connectivity=8)
-
-#     colors = np.random.randint(0, 255, size=(num_labels, 3), dtype=np.uint8)
-#     color_img = np.zeros((res, res, 3), dtype=np.uint8)
-
-#     dilate_kernel = np.ones((3, 3), np.uint8)
-
-#     abnormal_mask = np.zeros((res, res)).astype(np.bool_)
-
-#     # print('-----------------------------------------------')
-#     for i in range(num_labels):
-#         abnormal = False
-#         pixel_num = (labels == i).astype(np.int32).sum()
-#         # print('pixel_num',pixel_num)
-#         if pixel_num < pixel_num_thresh:  #  should be smaller than threshold
-#             label_area_mask = labels == i
-#             dilated_label_area_mask = cv2.dilate(label_area_mask.astype(np.uint8), dilate_kernel,
-#                                                  iterations=area_expand_thresh).astype(np.bool_)
-
-#             final_label_area_mask = dilated_label_area_mask
-
-
-
-#             abnormal = True
-#             abnormal_mask[final_label_area_mask] = True
-
-#             color_img[final_label_area_mask] = colors[i]
-
-
-#         if not abnormal:
-#             color_img[labels == i] = src_img_color[labels == i]
-
-#     src_img_color_with_edges = src_img_color.copy()
-#     src_img_color_with_edges[edges > edge_thresh] = (0, 0, 255)  #
-#     cat = cat_images(color_img.transpose(2,0,1)/255.0, src_img_color_with_edges.transpose(2,0,1)/255.0)
-#     display_CHW_RGB_img_np_matplotlib(cat)
-
-
-# def get_inconsistent_area_in_atlax_color(single_view_atlas_imgs,single_view_atlas_masks,diff_thresh = 0.25):
-#     # single_view_atlas_masks # (view_num,res, res, 3)
-#     # single_view_atlas_imgs # (view_num,res, res, 3)
-#     per_pixel_cross_view_min = np.min(single_view_atlas_imgs,
-#                                       where=single_view_atlas_masks,
-#                                       initial=100, axis=0)  # (res, res, 3)
-#     per_pixel_cross_view_max = np.max(single_view_atlas_imgs,
-#                                       where=single_view_atlas_masks,
-#                                       initial=-100, axis=0)  # (res, res, 3)
-#     per_pixel_cross_view_diff = per_pixel_cross_view_max - per_pixel_cross_view_min  # (res, res, 3)
-#     per_pixel_cross_view_diff[per_pixel_cross_view_diff == -200] = 0  # (res, res, 3)
-
-#     # print('per_pixel_cross_view_diff', per_pixel_cross_view_diff.min(), per_pixel_cross_view_diff.max(),
-#     #       per_pixel_cross_view_diff) # 0, about 0.5, 0.6
-
-
-#     diff_area = per_pixel_cross_view_diff.sum(-1) > diff_thresh  # # res,res
-
-
-
-
-
-#     # vis = False
-#     # if vis:
-#     # diff_img = per_pixel_cross_view_diff[::-1, :, :].transpose(2, 0, 1)
-#     #     diff_thresh_img = np.repeat(diff_area[np.newaxis, ...], 3, axis=0).astype(np.float)
-#     #     print('diff_img.shape', diff_img.shape, diff_img.min(), diff_img.max())
-#     #     print('diff_thresh_img.shape', diff_thresh_img.shape, diff_thresh_img.min(), diff_thresh_img.max())
-#     #
-#     #
-#     #     cat = cat_images(diff_img.copy(), diff_thresh_img.copy())
-#     #     display_CHW_RGB_img_np_matplotlib(cat)
-
-#     return diff_area
-
-# def fix_notable_view_id(per_pixel_view_id,single_view_atlas_masks,
-#                         num_labels,labels,
-#                         component_ratio_thresh =0.3, component_pixel_num_thresh = 100,
-#                         view_num = 8,):
-#     '''
-
-#     :param per_pixel_view_id: [res,res]
-#     :param view_num:
-#     :return:
-#     '''
-#     res = per_pixel_view_id.shape[0]
-#     refined_per_pixel_view_id = per_pixel_view_id.copy()
-#     foreground_mask = per_pixel_view_id >-1
-
-#     background_label = labels[~foreground_mask][0]
-
-#     if per_pixel_view_id.max() + 1 > view_num:
-#         view_num = per_pixel_view_id.max() + 1
-
-#     uint8_img = per_pixel_view_id * math.floor((255.0 / (view_num - 1)))
-#     uint8_img = np.clip(uint8_img, 0, 255).astype(np.uint8)
-
-
-#     ### Get charts
-#     num_charts, per_pixel_chart_ids = cv2.connectedComponents(foreground_mask.astype(np.uint8)*255, connectivity=8)
-#     background_chart_id = per_pixel_chart_ids[~foreground_mask][0]
-#     # display_CHW_RGB_img_np_matplotlib(per_pixel_chart_ids[np.newaxis,...]/num_charts)
-
-#     for chart_id in range(num_charts):
-#         if chart_id == background_chart_id:
-#             continue
-#         # Get how many pixels are there in this chart totally
-#         chart_pixel_total_num = (per_pixel_chart_ids == chart_id).sum()
-
-#         # Get the most frequent seen view id in this chart
-#         chart_atlax_view_id = per_pixel_view_id.copy()
-#         chart_atlax_view_id[per_pixel_chart_ids != chart_id] = view_num + 1
-#         chart_per_view_id_num = np.bincount(chart_atlax_view_id.reshape(-1))
-#         # chart_most_view_id = chart_per_view_id_num[:-1].argmax()
-#         chart_per_view_id_num = chart_per_view_id_num[:view_num]
-#         chart_most_view_id = chart_per_view_id_num.argmax()
-#         # print('chart_most_view_id',chart_most_view_id)
-#         # display_CHW_RGB_img_np_matplotlib(chart_atlax_view_id[np.newaxis,...]/num_charts)
-
-#         chart_component_labels = labels.copy()
-#         chart_component_labels[per_pixel_chart_ids != chart_id] = -1
-
-
-#         for component_id in np.unique(chart_component_labels):
-#             if component_id == -1:
-#                 continue
-
-
-#             component_mask = chart_component_labels == component_id
-#             component_pixel_num = component_mask.sum()
-
-#             if component_pixel_num/chart_pixel_total_num < component_ratio_thresh or \
-#                 component_pixel_num<component_pixel_num_thresh:
-#                 # this part is surrounded by neighbors
-#                 # see if visible,if so, use this
-#                 visible_in_most_view_id_mask = np.logical_and(single_view_atlas_masks[chart_most_view_id][:,:,0],component_mask)
-#                 refined_per_pixel_view_id[visible_in_most_view_id_mask] = chart_most_view_id
-
-
-
-
-
-#         # chart_atlax_view_id = per_pixel_view_id.copy()
-#         # chart_atlax_view_id[per_pixel_chart_ids != chart_id] = -1
-#         # in_chart_view_ids = np.unique(chart_atlax_view_id)
-#         #
-#         #
-#         #
-#         # chart_atlax_uint8_img = uint8_img.copy()
-#         #
-#         #
-#         # chart_atlax_uint8_img[per_pixel_chart_ids!=chart_id] = 0
-#         #
-#         #
-#         #
-#         #
-#         #
-#         # ### Segment
-#         #
-#         # for i in in_chart_view_ids:
-#         #     if i <0:
-#         #         continue
-
-
-
-
-
-
-
-
-
-#         ### Get edges
-#         # edges = detect_edges_in_gray_by_scharr(uint8_img)
-#         # edge_thresh = math.floor((255.0 / (view_num - 1))) - 1
-#         # edge_mask = edges > edge_thresh  # res,res
-#         # edge_mask = edge_mask * ~background_edges_mask
-
-
-
-#         # vis = True
-#         # if vis:
-#         #     edges_binary = edges.copy()
-#         #     edges_binary[edges > edge_thresh] = 0
-#         #     edges_binary[edges <= edge_thresh] = 255 # res,res
-#         #     src_img_color = cv2.cvtColor(uint8_img, cv2.COLOR_GRAY2BGR)  # [H,W,3]
-#         #     src_img_color_with_edges = src_img_color.copy() # [H,W,3]
-#         #     src_img_color_with_edges[edges > edge_thresh] = (0, 0, 255)  # [H,W,3]
-#         #     cat = cat_images(src_img_color_with_edges.transpose(2, 0, 1),edge_mask[np.newaxis,...])
-#         #     display_CHW_RGB_img_np_matplotlib(cat)
-#         #
-#         # # get border area by dilating edges
-#         # dilate_kernel = np.ones((11, 11), np.uint8)
-#         # dilate_iterations = 1
-#         # border_mask = cv2.dilate(edge_mask.astype(np.uint8) * 255, dilate_kernel,
-#         #                          iterations=dilate_iterations).astype(np.bool_)  # [res,res]
-#         #
-#         # ### Segment
-#         #
-
-#     return refined_per_pixel_view_id
 

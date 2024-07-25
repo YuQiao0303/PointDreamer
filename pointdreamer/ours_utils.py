@@ -38,7 +38,7 @@ from utils.camera_utils import get_cam_Ks_RTs_from_locations
 from models.get3d.extract_texture_map import xatlas_uvmap_w_face_id
 from models.get3d.get3d_utils.utils_3d import save_obj, savemeshtes2
 from utils.camera_utils import render_textured_mesh2
-from pointdreamer.unproject import get_shrinked_per_view_per_pixel_visibility_torch
+
 # from pointdreamer.unproject import get_charts, get_background_edge, get_border_area_in_atlax_view_id
 # from utils.utils_2d import detect_edges_in_gray_by_scharr_torch_batch,dilate_torch_batch
 
@@ -1063,6 +1063,7 @@ def recon_one_shape(name,root_path,cls_id,
 
 
                     **kwargs):
+    from pointdreamer.unproject import get_shrinked_per_view_per_pixel_visibility_torch
     with torch.no_grad():
         # print('cams[0].intrinsics.projection_matrix()',cams[0].intrinsics.projection_matrix().shape,cams[0].intrinsics.projection_matrix())
         ''' Skip exist'''
