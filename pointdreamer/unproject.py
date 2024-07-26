@@ -203,7 +203,7 @@ def unproject(inpainted_images,vertices,f_normals,
               cams,cam_res,base_dirs,
               gb_pos,mask,per_atlas_pixel_face_id,
               uv_centers,uv_scales,padding,inpaint_scale_factors,
-              mesh_normalized_depths,edge_dilate_kernels,save_img_path):
+              mesh_normalized_depths,edge_dilate_kernels,save_img_path,complete_unseen_by_projection=False):
     with torch.no_grad():
         '''
         uvs:                per mesh vertex uv:                     [vert_num, 2]
@@ -331,29 +331,24 @@ def unproject(inpainted_images,vertices,f_normals,
                 )
 
 
-        # # if a point is not visible in any view's non-border area, now we consider all areas, no matter border or not, by using the unshrinked visibility
-        # per_point_left_view_num = candidate_per_point_per_view_mask.sum(1)
-        # candidate_per_point_per_view_mask[per_point_left_view_num < 1, :] = \
-        #     torch.logical_or(
-        #         candidate_per_point_per_view_mask[per_point_left_view_num < 1, :],
-        #         per_view_per_point_visibility.permute(1, 0)[per_point_left_view_num < 1, :]
-        #     )
+        if complete_unseen_by_projection:
+            # if a point is not visible in any view's non-border area, now we consider all areas, no matter border or not, by using the unshrinked visibility
+            per_point_left_view_num = candidate_per_point_per_view_mask.sum(1)
+            candidate_per_point_per_view_mask[per_point_left_view_num < 1, :] = \
+                torch.logical_or(
+                    candidate_per_point_per_view_mask[per_point_left_view_num < 1, :],
+                    per_view_per_point_visibility.permute(1, 0)[per_point_left_view_num < 1, :]
+                )
 
 
         # now choose the ones with best normal similarity
         per_point_per_view_weight = torch.softmax(similarity_between_point_normal_and_view_dir,1) # [pointnum, view_num]
         per_point_per_view_weight[~candidate_per_point_per_view_mask] = -100
         point_view_ids = torch.argmax(per_point_per_view_weight, dim=1)
-        point_view_ids[candidate_per_point_per_view_mask.sum(1)<1] = -100 #view_num # if has no visible view, make it black
-        # per_point_left_view_num = candidate_per_point_per_view_mask.sum(1)
-        # candidate_per_point_per_view_mask[per_point_left_view_num > 1] = \
-        #     candidate_per_point_per_view_mask[
-        #         per_point_left_view_num > 1] * ~best_normal_per_point_per_view_mask[per_point_left_view_num>1]
-        # # get the final result
-        # point_view_ids = torch.argmax(candidate_per_point_per_view_mask.long(), dim=1)
-
-
-
+        
+        if not complete_unseen_by_projection:
+            point_view_ids[candidate_per_point_per_view_mask.sum(1)<1] = -100 #view_num # mark unseen areas
+ 
         single_view_atlas_imgs = torch.zeros((view_num,res, res, 3), device=device)
         single_view_atlas_masks = torch.zeros((view_num,res, res, 3), device=device).bool()
         atlas_img = torch.zeros((res, res, 3), device=device)
@@ -461,25 +456,29 @@ def get_shrinked_per_view_per_pixel_visibility_torch(per_pixel_mask,per_atlas_pi
 
 ## Dilate atlas to avoid artifact at edges
 def dilate_atlas(atlas_img,mask):
-    # without this, face edges would look weird
-    tex_map = atlas_img
-    lo, hi = (0, 1)
-    img = np.asarray(tex_map.data.cpu().numpy(), dtype=np.float32)
-    img = (img - lo) * (255 / (hi - lo))
-    dilate_mask = mask[0]  # from [1,res,res,1] to [1,res,res]
-    res = mask.shape[1]
+    # # without this, face edges would look weird
     device = atlas_img.device
-    img *= dilate_mask.detach().cpu().numpy()  # added by PointDreamer author, necessary to enable later dialate
-    img = img.clip(0, 255)
-    dilate_mask = np.sum(img.astype(float), axis=-1,
-                    keepdims=True)  # mask = np.sum(img.astype(np.float), axis=-1, keepdims=True)
-    dilate_mask = (dilate_mask <= 3.0).astype(float)  # mask = (mask <= 3.0).astype(np.float)
-    kernel = np.ones((3, 3), 'uint8')
-    kernel *= res // 256
-    dilate_img = cv2.dilate(img, kernel, iterations=1)  # without this, some faces will have edges with wrong colors
-    img = img * (1 - dilate_mask) + dilate_img * dilate_mask
-    img = img.clip(0, 255) #.astype(np.uint8)
-    atlas_img = torch.tensor(img/255.0).to(device).float()
+    atlas_img = naive_inpainting(img=atlas_img.permute(2, 0, 1), 
+                                     no_need_inpaint_mask2=mask[...,0],method='nearest')
+    atlas_img = torch.tensor(atlas_img, device=device).permute(1, 2, 0)
+    # tex_map = atlas_img
+    # lo, hi = (0, 1)
+    # img = np.asarray(tex_map.data.cpu().numpy(), dtype=np.float32)
+    # img = (img - lo) * (255 / (hi - lo))
+    # dilate_mask = mask[0]  # from [1,res,res,1] to [1,res,res]
+    # res = mask.shape[1]
+    # device = atlas_img.device
+    # img *= dilate_mask.detach().cpu().numpy()  # added by PointDreamer author, necessary to enable later dialate
+    # img = img.clip(0, 255)
+    # dilate_mask = np.sum(img.astype(float), axis=-1,
+    #                 keepdims=True)  # mask = np.sum(img.astype(np.float), axis=-1, keepdims=True)
+    # dilate_mask = (dilate_mask <= 3.0).astype(float)  # mask = (mask <= 3.0).astype(np.float)
+    # kernel = np.ones((3, 3), 'uint8')
+    # kernel *= res // 256
+    # dilate_img = cv2.dilate(img, kernel, iterations=1)  # without this, some faces will have edges with wrong colors
+    # img = img * (1 - dilate_mask) + dilate_img * dilate_mask
+    # img = img.clip(0, 255) #.astype(np.uint8)
+    # atlas_img = torch.tensor(img/255.0).to(device).float()
     return atlas_img
 
 

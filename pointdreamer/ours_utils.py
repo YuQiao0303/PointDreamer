@@ -14,7 +14,7 @@ import nvdiffrast
 from torchvision.transforms import transforms
 import nvdiffrast.torch as dr
 import trimesh
-from utils.utils_2d import display_CHW_RGB_img_np_matplotlib,cat_images,save_CHW_RGB_img,load_CHW_RGB_img
+from utils.utils_2d import display_CHW_RGB_img_np_matplotlib,cat_images,save_CHW_RGB_img,load_CHW_RGB_img,save_CHW_RGBA_img
 
 import open3d as o3d
 import PIL
@@ -614,8 +614,8 @@ def naive_inpainting(img,no_need_inpaint_mask2,method='linear'):
     :param method: 'linear' or 'nearest'
     :return:
     '''
-    img = img.cpu().numpy()
-    no_need_inpaint_mask2 = no_need_inpaint_mask2.cpu().numpy()
+    img = img.detach().cpu().numpy()
+    no_need_inpaint_mask2 = no_need_inpaint_mask2.detach().cpu().numpy()
     res = img.shape[1]
     no_need_inpaint_mask2 = no_need_inpaint_mask2[0]
     need_to_fill_mask = ~(no_need_inpaint_mask2.astype(np.bool_))
@@ -871,13 +871,17 @@ def get_sparse_images(point_pixels,colors,point_validation,hard_masks,save_path,
         hard_mask2s[i] = hard_mask2
         scale_factors[i] = scale_factor
         if save_path is not None:
-            save_CHW_RGB_img(sparse_img.cpu().numpy(),sparse_img_file)
+            # save_CHW_RGB_img(sparse_img.cpu().numpy(),sparse_img_file)
+            save_mask = (hard_mask0[0]*hard_mask2[0]).unsqueeze(0) # [3,256,256] -> [1,256,256]
+            sparse_img_rgba =  torch.cat([sparse_img,save_mask])
+            save_CHW_RGBA_img(sparse_img_rgba.cpu().numpy(),sparse_img_file)
+            
             save_CHW_RGB_img(hard_mask0.cpu().numpy(),mask0_img_file)
             save_CHW_RGB_img(hard_mask2.cpu().numpy(),mask2_img_file)
 
     return sparse_imgs,hard_mask0s,hard_mask2s,scale_factors
 
-def get_inpainted_images(sparse_imgs,hard_masks,hard_mask2s,save_path,inpainter,view_num,method = 'linear'):
+def get_inpainted_images(sparse_imgs,hard_mask0s,hard_mask2s,save_path,inpainter,view_num,method = 'linear'):
     device = sparse_imgs.device
     inpainted_imgs = torch.zeros_like(sparse_imgs).to(device)
     if method =='diff_inpaint':
@@ -919,7 +923,9 @@ def get_inpainted_images(sparse_imgs,hard_masks,hard_mask2s,save_path,inpainter,
             inpainted_imgs[i] = inpainted_img
             if save_path is not None:
                 inpainted_img_path = os.path.join(save_path, f'{i}_inpainted.png')
-                save_CHW_RGB_img(inpainted_img.cpu().numpy(), inpainted_img_path)
+                save_mask = (hard_mask0s[i][0]).unsqueeze(0) # [cam_num,256,256] -> [1,256,256]
+                inpainted_img_rgba =  torch.cat([inpainted_img,save_mask])
+                save_CHW_RGBA_img(inpainted_img_rgba.cpu().numpy(), inpainted_img_path)
         print('inpainting time', total_time, 's for', view_num, 'images')
     elif method == 'linear' or 'nearest':
         for i in range(view_num):

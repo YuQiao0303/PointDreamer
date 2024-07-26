@@ -1,6 +1,9 @@
 
 print('start import')
+import datetime
 import sys
+
+from tqdm import tqdm
 sys.path.append('models/POCO')
 import shutil
 import torch
@@ -50,6 +53,7 @@ def colorize_one_mesh(
                     crop_img, crop_padding,mask_ratio_thresh,
                     optimize_from,
                     edge_dilate_kernels,
+                    complete_unseen_by,
                   
 
                     inpainter,glctx,
@@ -107,18 +111,6 @@ def colorize_one_mesh(
             point_validation = refine_point_validation(cam_RTs,cam_K, refine_res,
                             hard_masks, point_validation, point_uvs, projected_points,save_img_path)
 
-        # ''' TODO: load existing multi-view images'''
-        # if load_exist_dense_img_path is not None:
-        #     exist_inpainted_multiview_imgs = True
-        # load_path = os.path.join(load_exist_dense_img_path,'meshes', cls_id, name, 'models')
-
-        # for i in range(view_num):
-        #     # inpainted_img_path = os.path.join(load_path, f'{i}_inpainted.png')
-        #     inpainted_img_path = os.path.join(load_path, f'{i}.png')
-        #     if not os.path.exists(inpainted_img_path):
-        #         exist_inpainted_multiview_imgs = False
-
-
 
         # get sparse img
         point_pixels = point_uvs * res   # [num_cameras,piont_num,2]
@@ -151,99 +143,108 @@ def colorize_one_mesh(
                     exist_inpainted_multiview_imgs=False
 
         if not exist_inpainted_multiview_imgs: # inpaint now
-            inpainted_images = get_inpainted_images(sparse_imgs,hard_masks,hard_mask2s,save_img_path, inpainter,view_num,
+            inpainted_images = get_inpainted_images(sparse_imgs,hard_mask0s,hard_mask2s,save_img_path, inpainter,view_num,
                                                     method=texture_gen_method)
             
             try:
                 logger.info(f'inpainting: {time.time() - start_inpainting} s')
             except:
                 pass
-        for i in range(view_num):
-            # hard_mask0s: [view_num,3,res,res]
-            inpainted_rgba = torch.cat([inpainted_images[i],hard_mask0s[i][0].unsqueeze(0)])
+        # for i in range(view_num):
+        #     # hard_mask0s: [view_num,3,res,res]
+        #     inpainted_rgba = torch.cat([inpainted_images[i],hard_mask0s[i][0].unsqueeze(0)])
             
-            save_CHW_RGBA_img( inpainted_rgba.cpu().numpy(), os.path.join(save_img_path, f'{i}.png'))
+        #     save_CHW_RGBA_img( inpainted_rgba.cpu().numpy(), os.path.join(save_img_path, f'{i}.png'))
 
     ''' Unproject inpainted 2D rendered images back to 3D'''
     start_unproject = time.time()
-
+    complete_unseen_by_projection = (complete_unseen_by=='unproject')
     atlas_img,shrinked_per_view_per_pixel_visibility,point_view_ids,points_atlas_pixel_coord,points,atlas_painted_mask = \
     unproject(inpainted_images,vertices,f_normals,
                 res,
                 cams,cam_res,base_dirs,
                 gb_pos,mask,per_atlas_pixel_face_id,
                 uv_centers,uv_scales,padding,inpaint_scale_factors,
-                mesh_normalized_depths,edge_dilate_kernels,save_img_path)
+                mesh_normalized_depths,edge_dilate_kernels,save_img_path,complete_unseen_by_projection)
     # point_view_ids = torch.ones_like(point_view_ids).to(device)*-100.0 # use this to directly predicting colors by 3D optimization
-    # atlas_img = paint_invisible_areas_by_optimize(atlas_img,points,points_atlas_pixel_coord,point_view_ids,input_xyz=coords,input_rgb=colors)
+    # 
     to_inpaint_face_id = per_atlas_pixel_face_id[0][torch.logical_not(atlas_painted_mask)].unique()
     to_inpaint_face_id = to_inpaint_face_id[to_inpaint_face_id>-1]
-    
-    use_atlas = True
-    if use_atlas:
-        atlas_img = paint_invisible_areas_by_neighbors(
-            vertices,faces,uvs,mesh_tex_idx,to_inpaint_face_id,atlas_img, atlas_painted_mask,use_atlas=True)
-        # atlas_img = dilate_atlas(atlas_img,mask)
+    ## Complete unseen areas that cannot be seen from any view
+    if complete_unseen_by=='optimize':
+        atlas_img = paint_invisible_areas_by_optimize(atlas_img,points,points_atlas_pixel_coord,point_view_ids,input_xyz=coords,input_rgb=colors)
+        atlas_img = dilate_atlas(atlas_img,mask)
+    elif complete_unseen_by =='neighbor':
+        use_atlas = True
+        if not use_atlas:
+            subdivided_vertices,subdivided_faces,subdevided_vert_colors = paint_invisible_areas_by_neighbors(
+            vertices,faces,uvs,mesh_tex_idx,to_inpaint_face_id,atlas_img, atlas_painted_mask,use_atlas=False)
+            mesh = trimesh.Trimesh(
+                vertices=subdivided_vertices.cpu().numpy(), 
+                faces=subdivided_faces.cpu().numpy(), 
+                vertex_colors=subdevided_vert_colors.cpu().numpy(),
+            )
+            mesh.export('subdivided.obj', 'obj')
+            return
+        else:
+            atlas_img = paint_invisible_areas_by_neighbors(
+                vertices,faces,uvs,mesh_tex_idx,to_inpaint_face_id,atlas_img, atlas_painted_mask,use_atlas=True)
+   
+    elif complete_unseen_by=='unproject':
+        atlas_img = dilate_atlas(atlas_img,mask)    
 
+    try:
+        logger.info(f'unporject before optimize: {time.time() - start_unproject} s')
+    except:
+        pass
+    
+    ## further optimize the result 
+    if optimize_from is not None:
+        start_optimzie = time.time()
+        if optimize_from != 'None':
+            # print('1. atlas_img.shape',atlas_img.shape) # [res,res,3]
+            eye_positions = torch.tensor(eye_positions).float().to(device)
+            # up_dirs = torch.tensor(up_dirs).float().to(device)
+            look_ats = torch.zeros((len(eye_positions), 3)).to(device)
+            atlas_img = atlas_img.permute(2, 0, 1).flip(1)  # [3,res,res]
+
+            if optimize_from == 'scratch':
+                init_atlas = None
+                shrinked_per_view_per_pixel_visibility = None
+            elif optimize_from == 'naive': # naive:
+                init_atlas = atlas_img
+                shrinked_per_view_per_pixel_visibility = None
+            elif optimize_from == 'ours':
+                init_atlas = atlas_img
+
+
+            atlas_img, final_render_result = optimize_color(init_atlas, inpainted_images, vertices, faces, uvs,
+                                                            mesh_tex_idx, cams, eye_positions, look_ats, up_dirs,
+                                                            uv_centers, uv_scales, padding, inpaint_scale_factors,
+                                                            glctx,
+                                                            shrinked_per_view_per_pixel_visibility=
+                                                            shrinked_per_view_per_pixel_visibility)  # [1,3,res,res], # [view_num,3,res,res]
+            atlas_img = atlas_img[0].flip(1).permute(1, 2, 0)  # [res,res,3],
+            # for i in range(view_num):
+            #     save_CHW_RGB_img(final_render_result[i].detach().cpu().numpy(),
+            #                         os.path.join(root_path, 'meshes', cls_id, name, 'models',
+            #                                     f'final_render_result_{i}.png'))
+
+            # print('2. atlas_img.shape', atlas_img.shape)
         try:
-            logger.info(f'unporject before optimize: {time.time() - start_unproject} s')
+            logger.info(f' optimize: {time.time() - start_optimzie} s')
         except:
             pass
 
-        if optimize_from is not None:
-            start_optimzie = time.time()
-            if optimize_from != 'None':
-                # print('1. atlas_img.shape',atlas_img.shape) # [res,res,3]
-                eye_positions = torch.tensor(eye_positions).float().to(device)
-                # up_dirs = torch.tensor(up_dirs).float().to(device)
-                look_ats = torch.zeros((len(eye_positions), 3)).to(device)
-                atlas_img = atlas_img.permute(2, 0, 1).flip(1)  # [3,res,res]
+    try:
+        logger.info(f'unproject: {time.time() - start_unproject} s')
+    except:
+        pass
 
-                if optimize_from == 'scratch':
-                    init_atlas = None
-                    shrinked_per_view_per_pixel_visibility = None
-                elif optimize_from == 'naive': # naive:
-                    init_atlas = atlas_img
-                    shrinked_per_view_per_pixel_visibility = None
-                elif optimize_from == 'ours':
-                    init_atlas = atlas_img
-
-
-                atlas_img, final_render_result = optimize_color(init_atlas, inpainted_images, vertices, faces, uvs,
-                                                                mesh_tex_idx, cams, eye_positions, look_ats, up_dirs,
-                                                                uv_centers, uv_scales, padding, inpaint_scale_factors,
-                                                                glctx,
-                                                                shrinked_per_view_per_pixel_visibility=
-                                                                shrinked_per_view_per_pixel_visibility)  # [1,3,res,res], # [view_num,3,res,res]
-                atlas_img = atlas_img[0].flip(1).permute(1, 2, 0)  # [res,res,3],
-                # for i in range(view_num):
-                #     save_CHW_RGB_img(final_render_result[i].detach().cpu().numpy(),
-                #                         os.path.join(root_path, 'meshes', cls_id, name, 'models',
-                #                                     f'final_render_result_{i}.png'))
-
-                # print('2. atlas_img.shape', atlas_img.shape)
-            try:
-                logger.info(f' optimize: {time.time() - start_optimzie} s')
-            except:
-                pass
+    return vertices,uvs,faces,mesh_tex_idx,atlas_img,mask
     
-        try:
-            logger.info(f'unproject: {time.time() - start_unproject} s')
-        except:
-            pass
 
-        return vertices,uvs,faces,mesh_tex_idx,atlas_img,mask
-    
-    else:
-        subdivided_vertices,subdivided_faces,subdevided_vert_colors = paint_invisible_areas_by_neighbors(
-        vertices,faces,uvs,mesh_tex_idx,to_inpaint_face_id,atlas_img, atlas_painted_mask,use_atlas=False)
-        mesh = trimesh.Trimesh(
-            vertices=subdivided_vertices.cpu().numpy(), 
-            faces=subdivided_faces.cpu().numpy(), 
-            vertex_colors=subdevided_vert_colors.cpu().numpy(),
-        )
-        mesh.export('subdivided.obj', 'obj')
-        return
+        
 
     
     
@@ -252,6 +253,10 @@ def colorize_one_mesh(
 
 
 def save_textured_mesh(vertices,uvs,faces,mesh_tex_idx,atlas_img,mask,output_root_path):
+    '''
+    atlas_image: [res,res,3]
+    mask: [1,res,res,1], bool
+    '''
 
     # save mesh
     savemeshtes2(
@@ -285,6 +290,13 @@ def save_textured_mesh(vertices,uvs,faces,mesh_tex_idx,atlas_img,mask,output_roo
     print('img.shape',img.shape)
     PIL.Image.fromarray(np.ascontiguousarray(img[::-1, :, :]), 'RGB').save(
         os.path.join(output_root_path, 'models', 'model_normalized.png'))
+    
+    # Also save atlas without background
+    cat_mask = (mask[0].long()*255).detach().cpu().numpy().astype(np.uint8) # from [1,res,res,1] to [res,res,1]
+    rgba_atlas_img = np.concatenate([img,cat_mask],axis=-1)
+    PIL.Image.fromarray(np.ascontiguousarray(rgba_atlas_img[::-1, :, :]), 'RGBA').save(
+        os.path.join(output_root_path, 'others', 'atlas_wo_background.png'))
+    
 
 
 def prepare(cfg_file):
@@ -295,7 +307,7 @@ def prepare(cfg_file):
     cfg = Munch.fromDict(yaml.safe_load(cfg_txt))
 
     # create logger
-    logger=get_logger(os.path.join(cfg.output_path,name,'log.log'))
+    logger=get_logger(os.path.join(cfg.output_path,f'{datetime.datetime.now().strftime("%Y.%m.%d.%H.%M.%S")}_log.log'))
 
     # load inpainter
     inpainter = None
@@ -360,7 +372,7 @@ def recon_one_textured_mesh(cfg,inpainter,POCO_net,camera_info,pc_file,name):
     all_start = time.time()
     start = time.time()
     possible_geo_path = pc_file.replace('.ply','_untextured_mesh.obj')
-    print(os.path.exists(possible_geo_path),possible_geo_path)
+    # print(os.path.exists(possible_geo_path),possible_geo_path)
     if load_exist_geo:
         if os.path.exists(possible_geo_path):
             mesh = kal.io.obj.import_mesh(possible_geo_path)
@@ -409,9 +421,9 @@ def recon_one_textured_mesh(cfg,inpainter,POCO_net,camera_info,pc_file,name):
         torch.save(xatlas_dict, xatlas_save_file)
     logger.info(f'xatlas time: {time.time()-start} s')
           
-    # generate texture by PointDreamer: Project, Inpaint, Unproject
+    # generate texture by PointDreamer
     
-    logger.info('Generate texture by PointDreamer: Project, Inpaint, Unproject...')
+    logger.info('Generate texture by PointDreamer...')
     start = time.time()
     vertices,uvs,faces,mesh_tex_idx,atlas_img,mask = colorize_one_mesh(xyz,rgb,vertices,faces,f_normals,
                                                                        
@@ -426,9 +438,6 @@ def recon_one_textured_mesh(cfg,inpainter,POCO_net,camera_info,pc_file,name):
     save_textured_mesh(vertices,uvs,faces,mesh_tex_idx,atlas_img,mask,os.path.join(output_path,name))
     logger.info(f'total time: {time.time()-all_start} s')
 
-def recon_all_textured_meshes(cfg,inpainter,POCO_net,camera_info,pc_files,names):
-    for i in range(len(names)):
-        recon_one_textured_mesh(cfg,inpainter,POCO_net,camera_info,pc_files[i],names[i])
 
 
 if __name__ == '__main__':
@@ -437,17 +446,22 @@ if __name__ == '__main__':
     parser.add_argument("--pc_file", type=str, help="path to input point cloud file",default ='dataset/demo_data/clock.ply')
     args = parser.parse_args()
     cfg_file = args.config
-    pc_file = args.pc_file
-
-
-    name = os.path.basename(pc_file).split('.')[0] + '_' + os.path.basename(cfg_file).split('.')[0]
-
-
     cfg,inpainter,POCO_net,camera_info,logger = prepare(cfg_file)
+    
+    if args.pc_file.endswith('.ply'):
+        pc_files = [args.pc_file]
+    else:
+        pc_root_path = args.pc_file
+        pc_files = os.listdir(pc_root_path)
+        pc_files = [os.path.join(pc_root_path,i) for i in pc_files if i.endswith('.ply')]
+        
 
-    shutil.copy(cfg_file,os.path.join(cfg.output_path,name,'config.yaml'))
-    logger.info('Start Recon...')
-    for i in range(1):
+    for pc_file in tqdm(pc_files):
+        name = os.path.basename(pc_file).split('.')[0] + '_' + os.path.basename(cfg_file).split('.')[0]
+
+        os.makedirs(os.path.join(cfg.output_path,name),exist_ok=True)
+        shutil.copy(cfg_file,os.path.join(cfg.output_path,name,'config.yaml'))
+        logger.info(f'Start Recon {pc_file}...')
         recon_one_textured_mesh(cfg,inpainter,POCO_net,camera_info, pc_file,name)
 
     '''

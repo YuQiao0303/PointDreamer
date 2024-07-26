@@ -51,11 +51,10 @@ crop_padding: 0.05
 mask_ratio_thresh: 0.82 # 0.82 for everything else, 0.5 for diffPIR
 
 # unproject
-unproject_by: 'vertex'
 edge_dilate_kernels: [21] # 21 by default,  [0] to turn off NBF; or use multi-level NBF as: [21, 11, 7, 5, 3, 1]
-naive_face_view: False
-optimize_from: ours
+optimize_from: ours  # None, scratch, naive, ours
 xatlas_texture_res: 1024
+complete_unseen_by: neighbor # 'unproject','optimize','neighbor'
 
 # not used
 smooth_mesh: False #!!!!!!!!!!! false for POCO
