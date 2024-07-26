@@ -22,7 +22,7 @@ from pointdreamer.ours_utils import *
 from pointdreamer.unproject import unproject,dilate_atlas,paint_invisible_areas_by_optimize,paint_invisible_areas_by_neighbors
 from utils.other_utils import read_ply_xyzrgb,save_colored_pc_ply
 from utils.camera_utils import create_cameras
-from utils.utils_2d import save_CHW_RGBA_img
+from utils.utils_2d import save_CHW_RGBA_img,dilate_foreground
 from models.POCO.generate_1 import POCO_get_geo,create_POCO_network,POCO_config
 import time
 
@@ -134,9 +134,8 @@ def colorize_one_mesh(
         if exist_inpainted_multiview_imgs: # load from exist
             inpainted_images = torch.zeros((len(cams), 3, res, res)).to(device)
             for i in range(view_num):
-                # inpainted_img_path = os.path.join(load_path, f'{i}_inpainted.png')
 
-                inpainted_img_path = os.path.join(save_img_path, f'{i}.png')
+                inpainted_img_path = os.path.join(save_img_path, f'{i}_inpainted.png')
                 if os.path.exists(inpainted_img_path):
                     inpainted_images[i] = load_CHW_RGB_img(inpainted_img_path).to(device)
                 else:
@@ -146,10 +145,15 @@ def colorize_one_mesh(
             inpainted_images = get_inpainted_images(sparse_imgs,hard_mask0s,hard_mask2s,save_img_path, inpainter,view_num,
                                                     method=texture_gen_method)
             
+
             try:
                 logger.info(f'inpainting: {time.time() - start_inpainting} s')
             except:
                 pass
+        # # dilate the foreground of the images to avoid artifacts at the edge
+        # inpainted_images_rgba = torch.cat([inpainted_images,hard_mask0s[:,:1,:,:]],dim=1) # N3HW, N3HW -> N4WH
+        # inpainted_images_rgba = dilate_foreground(inpainted_images_rgba)
+        # inpainted_images = inpainted_images[:,:3]
         # for i in range(view_num):
         #     # hard_mask0s: [view_num,3,res,res]
         #     inpainted_rgba = torch.cat([inpainted_images[i],hard_mask0s[i][0].unsqueeze(0)])
@@ -359,12 +363,17 @@ def recon_one_textured_mesh(cfg,inpainter,POCO_net,camera_info,pc_file,name):
 
     # load input colored pc and normalize
     xyz,rgb = read_ply_xyzrgb(pc_file)
+    if len(xyz)>30000:
+        print(len(xyz))
+        print(f"Point number > 30000! ({len(xyz)} points)({pc_file}) \n Please try uniformly subsampling the input point cloud first")
+        raise NotImplementedError
     xyz = torch.tensor(xyz).to(device)
     rgb = torch.tensor(rgb).float().to(device) /255.0
     vertices_min = xyz.min(0)[0]
     vertices_max = xyz.max(0)[0]
     xyz -= (vertices_max + vertices_min) / 2.
     xyz /= (vertices_max - vertices_min).max()
+
 
 
     # Get Geometry

@@ -435,13 +435,14 @@ def load_CHW_RGBA_img(file_name):
     # if inpainted_img.mode != 'RGB':
     #     inpainted_img = inpainted_img.convert('RGB')  # this is important
 
-    inpainted_img = torch.from_numpy(np.array(inpainted_img))  # H,W,C = 4
+    inpainted_img = torch.from_numpy(np.array(inpainted_img)).float() /255.  # H,W,C = 4
     foreground_mask = inpainted_img[:,:,3:]
     inpainted_img = inpainted_img[:, :, :3]  # H,W,C = 3
-    inpainted_img = inpainted_img.float() /255.
+
     # inpainted_img = torch.flip(inpainted_img, dims=(1,))
     # inpainted_img = inpainted_img.resize((res, res))
     inpainted_img = inpainted_img.permute(2,0,1)
+    foreground_mask = foreground_mask.permute(2,0,1)
     return inpainted_img,foreground_mask
 
 def make_2d_grid(min = -0.5,max = 0.5,resolution = 224):
@@ -845,3 +846,62 @@ def dilate_torch_batch(binary_img_batch, kernel_size):
 
 
 
+
+def dilate_foreground(N4HW_RGBA_imgs,iterations=2):
+    '''
+    '''
+    device = N4HW_RGBA_imgs.device
+    N4HW_RGBA_imgs = N4HW_RGBA_imgs*255.0
+    N4HW_RGBA_imgs = N4HW_RGBA_imgs.long()
+    dilated_imgs = torch.zeros_like(N4HW_RGBA_imgs).to(device).float()
+    for i in range(len(N4HW_RGBA_imgs)):
+        arr = N4HW_RGBA_imgs[i].permute(1,2,0).detach().cpu().numpy().astype(np.uint8) # 3HW to HW3
+        forground_mask = N4HW_RGBA_imgs[i,-1].bool().detach().cpu().numpy() # .astype(np.uint8)  HW
+  
+        # dialte foreground
+        background_mask = np.logical_not(forground_mask)
+
+        kernel = np.ones((3,3), 'uint8')
+        rgb = arr[:,:,:3]
+        rgba=arr
+        
+        
+        rgba[:,:,3] = forground_mask*255
+        rgb[background_mask] =0
+        for j in range(iterations):
+
+            dilated_rgba = cv2.dilate(rgba, kernel,iterations=1)  #
+
+            rgba = rgba * (1 - background_mask[...,np.newaxis]) + dilated_rgba * background_mask[...,np.newaxis]
+            rgba = rgba.astype(np.uint8)
+
+
+        dilated_imgs[i] = torch.tensor(rgba).permute(2,0,1).to(device).float()/255.0
+    return dilated_imgs
+
+    
+    # kiui.vis.plot_image(rgba)
+    
+    out_img_list.append(img)
+    return out_img_list
+
+if __name__ == '__main__':
+
+    def test_dilate_foreground():
+        import sys
+        import kiui
+        sys.path.append('.')
+        sys.path.append('..')
+        device = torch.device('cuda')
+        inpainted_img,foreground_mask = load_CHW_RGBA_img('output/clock_default/others/7_inpainted.png')
+        kiui.lo(inpainted_img)
+        kiui.lo(foreground_mask)
+        CHW_RGBA = torch.cat([inpainted_img,foreground_mask],dim=0).to(device).float()
+        # kiui.vis.plot_image(CHW_RGBA[:3].permute(1,2,0))
+        NCHW_RGBA = CHW_RGBA.unsqueeze(0)
+        dilated = dilate_foreground(NCHW_RGBA)[0]
+        cat = cat_images(inpainted_img.detach().cpu().numpy(),dilated[:3].detach().cpu().numpy())
+        
+        kiui.vis.plot_image(cat.transpose(1,2,0))
+    test_dilate_foreground()
+        
