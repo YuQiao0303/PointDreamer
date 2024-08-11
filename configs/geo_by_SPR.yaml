@@ -8,7 +8,7 @@ input_pc_generate_method: 'kaolin'  # blender, kaolin
 demo: False # if only run demo
 
 geo_root: None
-geo_from: 'POCO' # 'POCO', 'ours', 'SPR'
+geo_from: 'SPR' # 'POCO', 'ours', 'SPR'
 load_exist_dense_img_path: None #'out_inference/google_scanned_objects/2024.01.30.11.51.30_ours_kaolin_DDNM_inpaint_google_scanned_objects'
 
 use_GT_geo_watertight: False

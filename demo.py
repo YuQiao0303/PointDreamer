@@ -4,6 +4,8 @@ import datetime
 import sys
 
 from tqdm import tqdm
+
+from baselines.spr import recon_one_shape_SPR
 sys.path.append('models/POCO')
 import shutil
 import torch
@@ -27,8 +29,9 @@ from models.POCO.generate_1 import POCO_get_geo,create_POCO_network,POCO_config
 import time
 
 import argparse
+import kiui
 print('finish import')
-
+kiui.seed_everything(42)
 
 
 
@@ -399,10 +402,17 @@ def recon_one_textured_mesh(cfg,inpainter,POCO_net,camera_info,pc_file,name):
             else:
                 load_exist_geo = False
     if not load_exist_geo:
-        vertices,faces = POCO_get_geo(POCO_config,xyz,POCO_net,savedir_mesh_root = untextured_mesh_path, object_name=name+'_untextured')
+        if cfg.geo_from == 'SPR':
+            vertices,faces,_ = recon_one_shape_SPR(xyz.detach().cpu().numpy(),
+                                                   rgb.detach().cpu().numpy(),
+                                                   simplify_face_num=10000)
+            vertices = torch.tensor(vertices).float().to(device).contiguous()
+            faces = torch.tensor(faces).to(device).long().contiguous()
+        else:  # POCO
+            vertices,faces = POCO_get_geo(POCO_config,xyz,POCO_net,savedir_mesh_root = untextured_mesh_path, object_name=name+'_untextured')
 
     f_normals = kal.ops.mesh.face_normals(face_vertices=vertices[faces].unsqueeze(0), unit=True)[0] # [ F, 3]
-    logger.info(f'POCO time: {time.time()-start} s')
+    logger.info(f'Get Geometry time: {time.time()-start} s by {cfg.geo_from}')
           
     # un unwrapping
     start = time.time()

@@ -10,3 +10,4 @@ munch
 pymcubes
 torch-geometric
 opencv-python
+kiui

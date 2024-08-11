@@ -15,6 +15,8 @@ https://github.com/YuQiao0303/PointDreamer/assets/28769198/12d16fb7-ae71-4367-81
 - 2024.06.27: A Colab demo is now avaliable! Test by opening 'PointDreamer_demo.ipynb' in Colab.
 
 ## Install
+We conduct our experiments on a single NVIDIA 3090 GPU (24G), on Ubuntu 20.04.2 operating system. It takes about 100s to reconstruct a sample on 3090. We adittionally test on an A100 GPU, which takes about 60s per-shape.
+
 We tested on torch2.1.0, cuda11.8. Other versions may also work.
 ```bash
 git clone https://github.com/YuQiao0303/PointDreamer.git
