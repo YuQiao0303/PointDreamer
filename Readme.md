@@ -1,4 +1,5 @@
 # PointDreamer: 
+[![arXiv](https://img.shields.io/badge/arXiv-2406.15811-b31b1b.svg)](https://arxiv.org/abs/2406.15811) <a href="https://colab.research.google.com/drive/1gvc2OEotw43eVjwk1WQZMPYf1iVT3SXW?usp=sharing"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="google colab logo"></a>
 
 
 This repository contains the official implementation for the paper: *''PointDreamer: Zero-shot 3D Textured Mesh Reconstruction from Colored Point Cloud by 2D Inpainting''* by Qiao Yu, Xianzhi Li, Yuan Tang, Jinfeng Xu, Long Hu, Yixue Hao and Min Chen.
@@ -12,7 +13,9 @@ PointDreamer takes colored point clouds as input, and reconstructs corresponding
 https://github.com/YuQiao0303/PointDreamer/assets/28769198/12d16fb7-ae71-4367-813e-e7e470719925
 
 ## News
-- 2024.06.27: A Colab demo is now avaliable! Test by opening 'PointDreamer_demo.ipynb' in Colab.
+- 2024.08.13: Add SPR baseline.
+- 2024.06.27: A Colab demo is now avaliable! <a href="https://colab.research.google.com/drive/1gvc2OEotw43eVjwk1WQZMPYf1iVT3SXW?usp=sharing"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="google colab logo"></a>
+
 
 ## Install
 We conduct our experiments on a single NVIDIA 3090 GPU (24G), on Ubuntu 20.04.2 operating system. It takes about 100s to reconstruct a sample on 3090. We adittionally test on an A100 GPU, which takes about 60s per-shape.
