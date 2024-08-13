@@ -4,7 +4,7 @@ exist_root_path: None #2024.03.04.11.14.22_ours_kaolin_nearest_google_scanned_ob
 #### input
 dataset_name: google_scanned_objects # shapenet_core_v2,google_scanned_objects,omniobject3d
 cls_id: 'google_scanned_objects' #  03001627,  02958343, 03790512
-input_pc_generate_method: 'kaolin'  # kaolin
+input_pc_generate_method: 'kaolin'  #kaolin
 demo: False # if only run demo
 
 geo_root: None
@@ -18,7 +18,7 @@ coords_scale: 1.0
 
 input_type: 'object'
 
-input_already_noisy: False
+input_already_noisy: True # here
 
 ### output
 save_dir: 'out_inference' # for evaluation on datasets
@@ -28,7 +28,7 @@ save_input_pc: True #True
 
 ## recon
 project2mesh: False #True
-texture_gen_method: 'DDNM_inpaint' # ['linear', 'DDNM_inpaint','linear','nearest']
+texture_gen_method: 'DDNM_inpaint' # ['linear', 'DDNM_inpaint',deblur','linear','nearest']
 
 ## camera
 camera_distribution: fibonacci_sphere # 'fibonacci_sphere','self_defined','blender'
@@ -52,7 +52,7 @@ crop_padding: 0.05
 mask_ratio_thresh: 0.82 # 0.82 for everything else, 0.5 for diffPIR
 
 # unproject
-edge_dilate_kernels: [0] # 21 by default,  [0] to turn off NBF; or use multi-level NBF as: [21, 11, 7, 5, 3, 1]
+edge_dilate_kernels: [21] # 21 by default,  [0] to turn off NBF; or use multi-level NBF as: [21, 11, 7, 5, 3, 1]
 optimize_from: ours  # None, scratch, naive, ours
 xatlas_texture_res: 1024
 complete_unseen_by: neighbor # 'unproject','optimize','neighbor'

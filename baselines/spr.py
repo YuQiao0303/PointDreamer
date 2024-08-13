@@ -24,7 +24,7 @@ import pymeshlab
 
 
 def recon_one_shape_SPR(coords_np_Vx3, colors_np_Vx3,
-                        gt_normals_np_Vx3=None,save_path = None,depth = 8 ,simplify_face_num=None):
+                        gt_normals_np_Vx3=None,save_path = None,depth = 12 ,simplify_face_num=None):
     '''
     By default we use depth=12 for higher-quality reconstruction.
     If it's too slow to run on your device, try modify it from 12 to 8. 

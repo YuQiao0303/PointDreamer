@@ -68,6 +68,19 @@ python demo.py --config configs/default.yaml --pc_file dataset/demo_data/rolling
 python demo.py --config configs/default.yaml --pc_file dataset/NBF_demo_data/2ce6_chair.ply
 python demo.py --config configs/wo_NBF.yaml --pc_file dataset/NBF_demo_data/2ce6_chair.ply
 ```
+Also, we provide a script to run the Screend Poission Reconstruction (SPR) baseline. You can use it by:
+```bash
+python baselines/spr.py  --pc_file dataset/demo_data/clock.ply
+python baselines/spr.py  --pc_file dataset/demo_data/
+```
+
+## Configuration file setting
+Here we explain some important parameters in the config files (configs/XXX.yaml):
+- input_already_noisy: 'False' by default. If your input point cloud is noisy, set it to 'True'.
+- edge_dilate_kernels: Control the border dilation kernel of NBF. [21] by default,  [0] to turn off NBF
+- texture_gen_method: 2D inpainting module. 'DDNM_inpaint' by default.   ['linear', 'DDNM_inpaint','nearest']
+- view_num: How many multi-view images are used. 8 By default.
+
 
 ## Output
 Here we explain the output results.

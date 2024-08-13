@@ -377,6 +377,9 @@ def recon_one_textured_mesh(cfg,inpainter,POCO_net,camera_info,pc_file,name):
     xyz -= (vertices_max + vertices_min) / 2.
     xyz /= (vertices_max - vertices_min).max()
 
+    # save input colored pc
+    save_colored_pc_ply(xyz.detach().cpu().numpy(),rgb.detach().cpu().numpy(),
+                        os.path.join(output_path,name,'input_pc.ply'))
 
 
     # Get Geometry
@@ -409,7 +412,10 @@ def recon_one_textured_mesh(cfg,inpainter,POCO_net,camera_info,pc_file,name):
             vertices = torch.tensor(vertices).float().to(device).contiguous()
             faces = torch.tensor(faces).to(device).long().contiguous()
         else:  # POCO
-            vertices,faces = POCO_get_geo(POCO_config,xyz,POCO_net,savedir_mesh_root = untextured_mesh_path, object_name=name+'_untextured')
+            vertices,faces = POCO_get_geo(POCO_config,xyz,POCO_net,
+                                          savedir_mesh_root = untextured_mesh_path, 
+                                          object_name=name+'_untextured',
+                                          is_noisy=cfg.input_already_noisy)
 
     f_normals = kal.ops.mesh.face_normals(face_vertices=vertices[faces].unsqueeze(0), unit=True)[0] # [ F, 3]
     logger.info(f'Get Geometry time: {time.time()-start} s by {cfg.geo_from}')
@@ -486,11 +492,14 @@ if __name__ == '__main__':
     '''
     Example usage:
     python demo.py --config configs/default.yaml --pc_file dataset/demo_data/clock.ply
-    python demo.py --config configs/default.yaml --pc_file dataset/demo_data/PaulFrankLunchBox.ply
-    python demo.py --config configs/default.yaml --pc_file dataset/demo_data/rolling_lion.ply
-
-    python demo.py --config configs/default.yaml --pc_file dataset/NBF_demo_data/2ce6_chair.ply
-    python demo.py --config configs/wo_NBF.yaml --pc_file dataset/NBF_demo_data/2ce6_chair.ply
+    python demo.py --config configs/default.yaml --pc_file dataset/demo_data
+    python demo.py --config configs/default.yaml --pc_file dataset/sparse_data
+    
+    python demo.py --config configs/noisy.yaml --pc_file dataset/noisy_data
+    
+    python demo.py --config configs/default.yaml --pc_file dataset/NBF_demo_data
+    python demo.py --config configs/wo_NBF.yaml --pc_file dataset/NBF_demo_data
+   
 
     '''
 

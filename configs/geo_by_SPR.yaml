@@ -4,11 +4,11 @@ exist_root_path: None #2024.03.04.11.14.22_ours_kaolin_nearest_google_scanned_ob
 #### input
 dataset_name: google_scanned_objects # shapenet_core_v2,google_scanned_objects,omniobject3d
 cls_id: 'google_scanned_objects' #  03001627,  02958343, 03790512
-input_pc_generate_method: 'kaolin'  # blender, kaolin
+input_pc_generate_method: 'kaolin'  #kaolin
 demo: False # if only run demo
 
 geo_root: None
-geo_from: 'SPR' # 'POCO', 'ours', 'SPR'
+geo_from: 'SPR' # 'POCO','SPR'
 load_exist_dense_img_path: None #'out_inference/google_scanned_objects/2024.01.30.11.51.30_ours_kaolin_DDNM_inpaint_google_scanned_objects'
 
 use_GT_geo_watertight: False
@@ -18,6 +18,7 @@ coords_scale: 1.0
 
 input_type: 'object'
 
+input_already_noisy: False
 
 ### output
 save_dir: 'out_inference' # for evaluation on datasets
