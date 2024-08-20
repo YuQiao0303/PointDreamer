@@ -55,8 +55,8 @@ To run PointDreamer, use the following command:
 ```bash
 python demo.py --config [CONFIG_FILE] --pc_file [PC_FILE]
 ```
-- `[CONFIG_FILE]`: path to the configuration file, e.g. 'configs/default.yaml'
-- `[PC_FILE]`: path to the input point cloud file (.ply), e.g. 'dataset/demo_data/clock.ply'
+- `[CONFIG_FILE]`: path to the configuration file, e.g. 'configs/default.yaml'.
+- `[PC_FILE]`: path to the input point cloud file (.ply), e.g. 'dataset/demo_data/clock.ply'. Can also be a directory, e.g. 'datasets/demo_data'.
 
 By default, the results will be saved at './output'. 
 The reconstructed mesh will be saved at './output/name/models/model_normalized.obj'. Make sure to open it with the '.mtl' and '.png' files in the same folder. For example, use Meshlab or Blender to open it.
@@ -65,8 +65,7 @@ If you'd like to change the output directory, change the 'output_path' in the co
 Here are some examples:
 ```bash
 python demo.py --config configs/default.yaml --pc_file dataset/demo_data/clock.ply
-python demo.py --config configs/default.yaml --pc_file dataset/demo_data/PaulFrankLunchBox.ply
-python demo.py --config configs/default.yaml --pc_file dataset/demo_data/rolling_lion.ply
+python demo.py --config configs/default.yaml --pc_file dataset/demo_data
 
 python demo.py --config configs/default.yaml --pc_file dataset/NBF_demo_data/2ce6_chair.ply
 python demo.py --config configs/wo_NBF.yaml --pc_file dataset/NBF_demo_data/2ce6_chair.ply
