@@ -64,8 +64,8 @@ If you'd like to change the output directory, change the 'output_path' in the co
 
 Here are some examples:
 ```bash
-python demo.py --config configs/default.yaml --pc_file dataset/demo_data/clock.ply
-python demo.py --config configs/default.yaml --pc_file dataset/demo_data
+python demo.py --config configs/default.yaml --pc_file dataset/demo_data/clock.ply # reconstruct this file
+python demo.py --config configs/default.yaml --pc_file dataset/demo_data # reconstruct all files in this directory
 
 python demo.py --config configs/default.yaml --pc_file dataset/NBF_demo_data/2ce6_chair.ply
 python demo.py --config configs/wo_NBF.yaml --pc_file dataset/NBF_demo_data/2ce6_chair.ply
