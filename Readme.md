@@ -1,4 +1,5 @@
 # PointDreamer: 
+[![arXiv](https://img.shields.io/badge/arXiv-2406.15811-b31b1b.svg)](https://arxiv.org/abs/2406.15811) <a href="https://colab.research.google.com/drive/1gvc2OEotw43eVjwk1WQZMPYf1iVT3SXW?usp=sharing"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="google colab logo"></a>
 
 
 This repository contains the official implementation for the paper: *''PointDreamer: Zero-shot 3D Textured Mesh Reconstruction from Colored Point Cloud by 2D Inpainting''* by Qiao Yu, Xianzhi Li, Yuan Tang, Jinfeng Xu, Long Hu, Yixue Hao and Min Chen.
@@ -12,7 +13,9 @@ PointDreamer takes colored point clouds as input, and reconstructs corresponding
 https://github.com/YuQiao0303/PointDreamer/assets/28769198/12d16fb7-ae71-4367-813e-e7e470719925
 
 ## News
-- 2024.06.27: A Colab demo is now avaliable! Test by opening 'PointDreamer_demo.ipynb' in Colab.
+- 2024.08.13: Add SPR baseline.
+- 2024.06.27: A Colab demo is now avaliable! <a href="https://colab.research.google.com/drive/1gvc2OEotw43eVjwk1WQZMPYf1iVT3SXW?usp=sharing"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="google colab logo"></a>
+
 
 ## Install
 We conduct our experiments on a single NVIDIA 3090 GPU (24G), on Ubuntu 20.04.2 operating system. It takes about 100s to reconstruct a sample on 3090. We adittionally test on an A100 GPU, which takes about 60s per-shape.
@@ -52,8 +55,8 @@ To run PointDreamer, use the following command:
 ```bash
 python demo.py --config [CONFIG_FILE] --pc_file [PC_FILE]
 ```
-- `[CONFIG_FILE]`: path to the configuration file, e.g. 'configs/default.yaml'
-- `[PC_FILE]`: path to the input point cloud file (.ply), e.g. 'dataset/demo_data/clock.ply'
+- `[CONFIG_FILE]`: path to the configuration file, e.g. 'configs/default.yaml'.
+- `[PC_FILE]`: path to the input point cloud file (.ply), e.g. 'dataset/demo_data/clock.ply'. Can also be a directory, e.g. 'datasets/demo_data'.
 
 By default, the results will be saved at './output'. 
 The reconstructed mesh will be saved at './output/name/models/model_normalized.obj'. Make sure to open it with the '.mtl' and '.png' files in the same folder. For example, use Meshlab or Blender to open it.
@@ -61,9 +64,8 @@ If you'd like to change the output directory, change the 'output_path' in the co
 
 Here are some examples:
 ```bash
-python demo.py --config configs/default.yaml --pc_file dataset/demo_data/clock.ply
-python demo.py --config configs/default.yaml --pc_file dataset/demo_data/PaulFrankLunchBox.ply
-python demo.py --config configs/default.yaml --pc_file dataset/demo_data/rolling_lion.ply
+python demo.py --config configs/default.yaml --pc_file dataset/demo_data/clock.ply # reconstruct this file
+python demo.py --config configs/default.yaml --pc_file dataset/demo_data # reconstruct all files in this directory
 
 python demo.py --config configs/default.yaml --pc_file dataset/NBF_demo_data/2ce6_chair.ply
 python demo.py --config configs/wo_NBF.yaml --pc_file dataset/NBF_demo_data/2ce6_chair.ply
