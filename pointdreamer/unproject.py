@@ -135,7 +135,7 @@ def paint_invisible_areas_by_neighbors(vertices,faces,uvs,face_uv_idx,to_inpaint
     
     
     subdevided_vert_has_color = per_pixel_mask[subdivided_vert_uv_pixel_coords[:, 0], subdivided_vert_uv_pixel_coords[:, 1]]
-    valid_index = torch.arange(len(subdivided_vertices))[subdevided_vert_has_color]
+    valid_index = torch.arange(len(subdivided_vertices)).to(device)[subdevided_vert_has_color]
 
 
     # Inpaint no_color vertices by neighbors (modified from Unique3D)
