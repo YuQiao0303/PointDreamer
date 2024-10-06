@@ -6,7 +6,7 @@ import cv2
 import math
 from utils.utils_2d import display_CHW_RGB_img_np_matplotlib,cat_images,save_CHW_RGB_img,detect_edges_in_gray_by_scharr
 from utils.utils_2d import detect_edges_in_gray_by_scharr_torch_batch,dilate_torch_batch
-from utils.vtk_basic import vis_actors_vtk,get_colorful_pc_actor_vtk
+# from utils.vtk_basic import vis_actors_vtk,get_colorful_pc_actor_vtk
 from pointdreamer.ours_utils import get_point_validation_by_depth,naive_inpainting
 import kaolin as kal
 import time

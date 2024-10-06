@@ -1727,8 +1727,8 @@ def optimize_color(atlas_img,inpainted_imgs,vertices,faces,uvs,mesh_tex_idx,
     for it in range(iterations):
         optimizer.zero_grad()
 
-        images = kal.render.mesh.texture_mapping(texture_coords,
-                                                atlas_img.repeat(num_views, 1, 1, 1),
+        images = kal.render.mesh.texture_mapping(texture_coords.double(),
+                                                atlas_img.repeat(num_views, 1, 1, 1).double(),
                                                 mode='bilinear') #[num_views,res,res,3]
 
         if shrinked_per_view_per_pixel_visibility is not None:
