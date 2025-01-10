@@ -135,7 +135,7 @@ def paint_invisible_areas_by_neighbors(vertices,faces,uvs,face_uv_idx,to_inpaint
     
     
     subdevided_vert_has_color = per_pixel_mask[subdivided_vert_uv_pixel_coords[:, 0], subdivided_vert_uv_pixel_coords[:, 1]]
-    valid_index = torch.arange(len(subdivided_vertices))[subdevided_vert_has_color]
+    valid_index = torch.arange(len(subdivided_vertices)).to(device)[subdevided_vert_has_color]
 
 
     # Inpaint no_color vertices by neighbors (modified from Unique3D)
@@ -241,25 +241,40 @@ def unproject(inpainted_images,vertices,f_normals,
             transformed_points[i] = cam.transform(points)
         per_view_per_point_depths = transformed_points[ ..., 2]
         per_view_per_point_uvs = transformed_points[..., :2]
-        per_view_per_point_uvs = (per_view_per_point_uvs - uv_centers) / uv_scales  # now all between -0.5, 0.5
+        u = per_view_per_point_uvs[..., 0]
+        v = per_view_per_point_uvs[..., 1]
+
+        if uv_scales is not None and uv_centers is not None and inpaint_scale_factors is not None and padding is not None:
+            per_view_per_point_uvs = (per_view_per_point_uvs - uv_centers) / uv_scales  # now all between -0.5, 0.5
 
 
-        per_view_per_point_uvs_no_scale = per_view_per_point_uvs.clone()
-        per_view_per_point_uvs = per_view_per_point_uvs * inpaint_scale_factors.unsqueeze(-1).unsqueeze(-1)
+            per_view_per_point_uvs_no_scale = per_view_per_point_uvs.clone()
+            per_view_per_point_uvs = per_view_per_point_uvs * inpaint_scale_factors.unsqueeze(-1).unsqueeze(-1)
 
 
-        per_view_per_point_uvs = per_view_per_point_uvs * (1 - 2 * padding)  # now all between -0.45, 0.45
-        per_view_per_point_uvs= per_view_per_point_uvs + 0.5  # now all between 0.05, 0.95
+            per_view_per_point_uvs = per_view_per_point_uvs * (1 - 2 * padding)  # now all between -0.45, 0.45
+            per_view_per_point_uvs= per_view_per_point_uvs + 0.5  # now all between 0.05, 0.95
 
-        per_view_per_point_uvs_no_scale = per_view_per_point_uvs_no_scale * (1 - 2 * padding)  # now all between -0.45, 0.45
-        per_view_per_point_uvs_no_scale= per_view_per_point_uvs_no_scale + 0.5  # now all between 0.05, 0.95
+            per_view_per_point_uvs_no_scale = per_view_per_point_uvs_no_scale * (1 - 2 * padding)  # now all between -0.45, 0.45
+            per_view_per_point_uvs_no_scale= per_view_per_point_uvs_no_scale + 0.5  # now all between 0.05, 0.95
+        else:
+            per_view_per_point_uvs = per_view_per_point_uvs*0.5 + 0.5
+            per_view_per_point_uvs_no_scale = per_view_per_point_uvs # from around [-1,1] to [0,1]
 
 
         # Get per-atls-pixel  visibility by depth (so that we have per-view visible atlas)
         per_view_per_point_visibility,_ = get_point_validation_by_depth(cam_res,per_view_per_point_uvs_no_scale,
                                         per_view_per_point_depths,mesh_normalized_depths,offset = 0.0001,
                                                                         vis=False)# [cam_num, point_num]
-
+        # per_view_per_point_visibility[~per_view_per_point_visibility] = True # debug
+        # import kiui
+        # kiui.lo(per_view_per_point_visibility)
+            # vis3D = True
+    # if vis3D:
+    #     for i in range(cam_num):
+    #         from utils.vtk_basic import vis_actors_vtk,get_pc_actor_vtk
+    #         vis_actors_vtk([
+    #             get_pc_actor_vtk(point_uvs[i],point_visibility[i])])
         start_shrink_visibility = time.time()
      
 
@@ -345,13 +360,15 @@ def unproject(inpainted_images,vertices,f_normals,
         per_point_per_view_weight = torch.softmax(similarity_between_point_normal_and_view_dir,1) # [pointnum, view_num]
         per_point_per_view_weight[~candidate_per_point_per_view_mask] = -100
         point_view_ids = torch.argmax(per_point_per_view_weight, dim=1)
-        
+        import kiui
+        kiui.lo(point_view_ids)
+        print(point_view_ids)
         if not complete_unseen_by_projection:
             point_view_ids[candidate_per_point_per_view_mask.sum(1)<1] = -100 #view_num # mark unseen areas
  
         single_view_atlas_imgs = torch.zeros((view_num,res, res, 3), device=device)
         single_view_atlas_masks = torch.zeros((view_num,res, res, 3), device=device).bool()
-        atlas_img = torch.zeros((res, res, 3), device=device)
+        atlas_img_HW3 = torch.zeros((res, res, 3), device=device)
         atlas_painted_mask = torch.zeros((res,res),device=device).bool()
         per_pixel_view_id = -torch.ones((res,res),device=device).long()
 
@@ -359,16 +376,21 @@ def unproject(inpainted_images,vertices,f_normals,
 
         # paint each pixel in the atlas by the query color in each view img
         for i in range(len(cams)):
-
+            # print(i,'start')
             point_this_view_mask = point_view_ids == i
 
-            view_img = inpainted_images[i]
-            view_img = torch.flip(view_img,[1]) # flip upside down
-            view_img = view_img.permute(1,2,0) # HWC
-
-            atlas_img[points_atlas_pixel_coord[point_this_view_mask][:, 0],
+            view_img_HW3 = inpainted_images[i]
+            view_img_HW3 = torch.flip(view_img_HW3,[1]) # flip upside down
+            view_img_HW3 = view_img_HW3.permute(1,2,0) # HWC
+            # import kiui
+            # kiui.lo(view_img_HW3)
+            # kiui.lo(atlas_img_HW3)
+            # kiui.lo(points_atlas_pixel_coord)
+            # kiui.lo(point_this_view_mask)
+            # kiui.lo(per_view_per_point_pixel)
+            atlas_img_HW3[points_atlas_pixel_coord[point_this_view_mask][:, 0],
                         points_atlas_pixel_coord[point_this_view_mask][:, 1]] = \
-                view_img[per_view_per_point_pixel[i][point_this_view_mask][:,0],
+                view_img_HW3[per_view_per_point_pixel[i][point_this_view_mask][:,0],
                             per_view_per_point_pixel[i][point_this_view_mask][:,1]]
 
             per_pixel_view_id[points_atlas_pixel_coord[point_this_view_mask][:, 0],
@@ -376,7 +398,7 @@ def unproject(inpainted_images,vertices,f_normals,
 
             atlas_painted_mask[points_atlas_pixel_coord[point_this_view_mask][:, 0],
                         points_atlas_pixel_coord[point_this_view_mask][:, 1]] = True
-
+            # print(i,'safely done')
             ################
             # # save single_view_atlas_imgs
             # per_view_per_point_visibility
@@ -400,7 +422,7 @@ def unproject(inpainted_images,vertices,f_normals,
 
       
         
-        return atlas_img,shrinked_per_view_per_pixel_visibility,point_view_ids,points_atlas_pixel_coord,points,atlas_painted_mask
+        return atlas_img_HW3,shrinked_per_view_per_pixel_visibility,point_view_ids,points_atlas_pixel_coord,points,atlas_painted_mask
     
 
 

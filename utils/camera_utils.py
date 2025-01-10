@@ -101,9 +101,10 @@ def fibonacci_sphere(samples, radius):
 
     return np.array(points)
 
-def calculate_up_vector(eye_position, target_position):
+def calculate_up_vector(eye_position, target_position,world_up = None):
     gaze_direction = target_position - eye_position
-    world_up = np.array([0, 1, 0])
+    if world_up is None:
+        world_up = np.array([0, 1, 0])
     if np.allclose(np.cross(gaze_direction, world_up), 0):
         up_vector = np.array([0, 0, 1])
     else:

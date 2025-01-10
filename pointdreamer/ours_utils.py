@@ -1160,10 +1160,13 @@ def recon_one_shape(name,root_path,cls_id,
                 hard_masks = transforms.Resize((res,res))(hard_masks.unsqueeze(1).float()).squeeze(1).bool() # N,cam_res,cam_res
 
 
-            point_validation1,_ = get_point_validation_by_depth(cam_res,point_uvs,point_depths,mesh_normalized_depths)
-            point_validation2 = get_point_validation_by_o3d(projected_points,eye_positions,hidden_point_removal_radius)
-            point_validation = torch.logical_or(point_validation1,point_validation2)
-           
+            point_validation1,_ = get_point_validation_by_depth(cam_res,point_uvs,point_depths,mesh_normalized_depths,offset = 0.1111)
+            if point_validation_by_o3d:
+                point_validation2 = get_point_validation_by_o3d(projected_points,eye_positions,hidden_point_removal_radius)
+                point_validation = torch.logical_or(point_validation1,point_validation2) # in paper we use logical or to enable more points
+            else:
+                point_validation = point_validation1 # temp: if for imcomplete input
+
 
             if refine_point_validation_by_remove_abnormal_depth:
                 point_validation = refine_point_validation(cam_RTs,cam_K, refine_res,

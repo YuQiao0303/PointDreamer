@@ -90,7 +90,7 @@ def main():
         
 
     for pc_file in tqdm(pc_files):
-        name = os.path.basename(pc_file).split('.')[0] 
+        name = os.path.basename(pc_file).split('.ply')[0] 
         os.makedirs(os.path.join(output_path,name),exist_ok=True)
    
         coords_np_Vx3,colors_np_Vx3_uint8 = read_ply_xyzrgb(pc_file)

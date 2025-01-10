@@ -5,7 +5,7 @@ cache_*/
 
 Logs/
 out/
-output/
+output*
 out_inference/
 geo_inference/
 vis_results/
