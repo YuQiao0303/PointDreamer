@@ -120,5 +120,5 @@ The images are in UV space.
 For example, in this image, the framed area is detected as border-area for this view, so it will be skipped first, and other views will have a higher priority to paint the corresponding area. So this area (bottom of chair seat) is painted as 'red', instead of wrongly 'black' in this view.
 
 
-## Acknolwedgement
+## Acknowledgement
 This work is built upon [DDNM](https://github.com/wyhuai/DDNM), [POCO](https://github.com/valeoai/POCO), and [GET3D](https://github.com/nv-tlabs/GET3D). Thank the authors for their amazing work!
